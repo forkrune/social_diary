@@ -91,13 +91,6 @@ local function Measure(font, text)
     return math.ceil(m:GetStringHeight() or 0)
 end
 
--- Whether Text.Lines opened `e` with its dateline (where and when it began),
--- which is set in faded ink. Mirrors JourneyText's Opening.
-local function HasOpening(e)
-    if e.kind == "week" then return e.reached ~= nil end
-    return e.known and (e.first or e.reached ~= nil)
-end
-
 -- The names in an entry's prose made links to their pages (JRN-22): the
 -- people from the diary crossed there, by the name the prose gives them,
 -- the longest first so "Koko Skybluff" is never cut to "Koko".
@@ -239,13 +232,27 @@ local function EntryItems(recap, now, fights)
                 end
                 Add({ height = SITTINGS.after })
             end
-            local opening, names = HasOpening(e), NamesOf(e)
-            for k, line in ipairs(Text.Lines(e, now, fights)) do
-                local font = (k == 1 and opening) and FONT.faded or FONT.body
-                Add({ text = Linked(line, names), font = font, height = Measure(font, line) + ENTRY.para })
+            -- The rubric still belongs to the level or week; its dateline
+            -- gives that context once. Everything the diary tells beneath
+            -- it follows the selected sitting, as the facing plates do.
+            -- Previously an old evening's pictures sat beside the entire
+            -- level's prose, including other evenings' people and finds.
+            local opening = Text.Opening(e, now)
+            if opening then
+                Add({ text = opening, font = FONT.faded, height = Measure(FONT.faded, opening) + ENTRY.para })
             end
-            -- The player's own words, in their hand, as written.
-            local quote, more = Text.Note(e)
+            -- The full map deliberately shows the whole level or week.
+            -- Its prose does too, keeping the complete account available,
+            -- including brief stretches without their own sitting line.
+            local scope = page.mode == "full" and e or (OpenPieceOf(e) or e)
+            local names = NamesOf(scope)
+            for _, line in ipairs(Text.Lines(scope, now, fights, true)) do
+                Add({ text = Linked(line, names), font = FONT.body, height = Measure(FONT.body, line) + ENTRY.para })
+            end
+            -- Dated notes and hindsight belong to the same stretch as
+            -- the prose. Other sittings keep their own words, and the
+            -- full map keeps the level-wide account; nothing is removed.
+            local quote, more = Text.Note(scope)
             if quote then
                 Add({ text = quote, font = FONT.noteWritten, note = true,
                     height = Measure(FONT.noteWritten, quote) + (more and ENTRY.more or ENTRY.para) })
@@ -256,7 +263,7 @@ local function EntryItems(recap, now, fights)
             -- The name in each is a link to them (the user's decision 5 on
             -- the stranger-glimpse proposal, 5 Nov 2026): their page, or a
             -- stranger's glimpse, through ToPerson as every name here.
-            for _, f in ipairs(e.hindsight or {}) do
+            for _, f in ipairs(scope.hindsight or {}) do
                 local line = Text.Hindsight(f)
                 local short = Text.Short(f.guid)
                 -- (`text` the words as read, `linked` as written on the row.)

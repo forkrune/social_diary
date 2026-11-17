@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixes
+
+- _Your Diary_ now tells the outing shown on its maps
+
 ## [4.1.1]
 
 A small Update: the preset tags now speak your language, and Feign Death or healing yourself no longer leaves false deaths and _Close Calls_ in your diary.

@@ -348,8 +348,8 @@ local function SetView(page, piece)
 end
 
 -- Opens piece `k` of entry `i` (its newest when not given, or where `i`
--- is spliced: the entry whole): the entry's prose on the left, the
--- piece's plates on the right (ViewOf).
+-- is spliced: the entry whole): the piece's prose on the left, under the
+-- level's dateline, and its plates on the right (ViewOf).
 function OpenPiece(i, k)
     local page = YourDiary.page
     if not (page and page.recap and page.recap.entries[i]) then return end
@@ -470,8 +470,9 @@ end
 
 -- Shows `mapID`'s whole map across the right page, the entry `i` in ink
 -- (the open one when not given): the whole entry's, never a piece's. The
--- piece open is kept, so the way back (Full.lua's Back: OpenPiece) is to
--- it; another entry's opens at its newest.
+-- prose on the left follows that whole entry too. The piece open is kept,
+-- so the way back (Full.lua's Back: OpenPiece) is to it; another entry's
+-- opens at its newest.
 function OpenFull(mapID, i)
     local page = YourDiary.page
     if not (page and page.recap and mapID) then return end

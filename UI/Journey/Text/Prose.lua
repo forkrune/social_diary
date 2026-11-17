@@ -92,6 +92,10 @@ local function Opening(e, now)
     if where then return Fmt(L["Reached on %1$s %2$s.##zone"], Day(r.at, now), where) end
     return Fmt(L["Reached on %s."], Day(r.at, now))
 end
+-- The level's dateline belongs to its rubric even while a later sitting
+-- is open. The left page writes it separately from that sitting's prose,
+-- so a copied `first` flag cannot restart the diary on every evening.
+Text.Opening = Opening
 
 -- The zones and their times are not told here: the ledger under the entry
 -- (the zone rows) carries them, a dungeon's row marked with its doorway.
@@ -126,10 +130,16 @@ local STOPS = {
     openers = { L["Later, %s."], L["Then %s."], L["After that, %s."] },
 }
 
--- Which way an entry says it: the same every time for the same entry, and
--- different from its neighbours.
+-- Which way an entry says it: stable when reopened, with each sitting
+-- having its own voice even within one level. The start is the sitting's
+-- identity; its end and accumulated play time keep changing while the
+-- player is there, and must never make the words shuffle. Whole entries
+-- retain their previous variation.
 local function Seed(e)
-    return (e.level or 0) + math.floor((e.week or 0) / ns.DAY)
+    local seed = (e.level or 0) + math.floor((e.week or 0) / ns.DAY)
+    local at = e.at or (e.sitting and e.sitting.from)
+    if at then return seed + ns.UI.Surface.Seed(at) end
+    return seed
 end
 
 -- A stop's place for a way: its phrase by the way's role, or bare. A
@@ -231,7 +241,9 @@ end
 
 -- A quiet stretch still says something, briefly.
 local function Quiet(e)
-    if e.kind == "week" then return nil end
+    -- A sitting is only part of its level. Missing words there cannot
+    -- establish that nothing happened at the level as a whole.
+    if e.kind == "week" or e.at or e.sitting then return nil end
     if e.seconds <= 0 then return L["Nothing on the road at this level."] end
     return nil
 end
@@ -298,10 +310,16 @@ function Text.Paragraphs()
     return paragraphKinds:Ordered()
 end
 
-function Text.Lines(e, now, index)
-    local lines, runs = {}, {}
+-- `withoutOpening` is used when the rubric's level-wide dateline has
+-- already been written. All remaining paragraphs are asked of the same
+-- selected sitting as its plates; registered kinds and shared runs keep
+-- their full account, including events that have no map position.
+function Text.Lines(e, now, index, withoutOpening)
+    local lines, runs, opening = {}, {}, false
     for _, p in ipairs(Text.Paragraphs()) do
-        local text = p.lines(e, now, index)
+        local text
+        if not (withoutOpening and p.key == "opening") then text = p.lines(e, now, index) end
+        if text and p.key == "opening" then opening = true end
         local at = text and p.run and runs[p.run]
         if at then
             lines[at] = lines[at] .. " " .. text
@@ -310,7 +328,10 @@ function Text.Lines(e, now, index)
             if p.run then runs[p.run] = #lines end
         end
     end
-    if #lines <= 1 then
+    -- A dateline alone is quiet; one substantive paragraph is already a
+    -- story. This distinction matters when the dateline is written
+    -- separately, and when a recorded event has no captured route time.
+    if #lines == 0 or (#lines == 1 and opening) then
         local quiet = Quiet(e)
         if quiet then lines[#lines + 1] = quiet end
     end
