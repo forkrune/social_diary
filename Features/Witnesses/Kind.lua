@@ -1,10 +1,10 @@
--- Witnesses: strangers observed around the user's fights. Automatic rows
--- describe their presence, not attention, intentions or a rescue. The
--- player may write a stronger interpretation in a custom witness below.
+-- Witnesses: people who saw a death or took part in the user's defence.
+-- New rows keep the observation that qualified them; old rows have no such
+-- proof and retain their bounded words. A written account stays the player's.
 -- A feature in a folder of its own
 -- (.claude/skills/new-feature/folder.md):
 --
---   Kind.lua     what a witness is to the diary: its three row kinds,
+--   Kind.lua     what a witness is to the diary: its row kinds,
 --                their words and icons on the timeline, and the finding of
 --                a moment's witnesses by time
 --   Text.lua     its words on Your Diary's plates: the card's (the name,
@@ -51,13 +51,38 @@ local addonName, ns = ...
 local Witnesses = {}
 ns.Witnesses = Witnesses
 
-local WATCHED, HELPED, SAVED = "watched_death", "tried_to_help", "saved_you"
-Witnesses.WATCHED, Witnesses.HELPED, Witnesses.SAVED = WATCHED, HELPED, SAVED
+local WATCHED, HELPED, SAVED, AID = "watched_death", "tried_to_help", "saved_you", "helped_you"
+Witnesses.WATCHED, Witnesses.HELPED, Witnesses.SAVED, Witnesses.AID = WATCHED, HELPED, SAVED, AID
 
--- Maximum gap between samples of the same targeting context. The stored
--- duration is not attention or intent and never strengthens the wording.
-local WATCHING = { gap = 2.5 }
+-- A continuous, corroborated watch shorter than `saw` is a glimpse. The
+-- gap is the largest interval the capture accepts between readings. No
+-- amount of watching establishes malice, so there is no moral threshold.
+local WATCHING = { saw = 1.5, gap = 2.5 }
 Witnesses.WATCHING = WATCHING
+
+-- The version belongs to the new capture contract, not to the old kind
+-- names. In particular an old saved_you row is never upgraded by reading
+-- it. The method and action must agree before stronger words are used.
+function Witnesses.Proven(c)
+    if type(c) ~= "table" or c.evidence ~= 1 then return false end
+    if c.method == "target_streak" then return c.action == "witness" end
+    if c.method == "party_kill" then return c.action == "kill" end
+    return c.method == "meter" and (c.action == "heal" or c.action == "absorb" or c.action == "dispel")
+end
+
+-- One role is shared by timeline, card and grouping. Several people can
+-- share a deed only when this returns the same value: a shield and a heal
+-- are both help, but a card saying "healed you" must not include the shielder.
+function Witnesses.Role(kind, c)
+    if Witnesses.Proven(c) then
+        if kind == WATCHED and c.action == "witness" then
+            return type(c.watched) == "number" and c.watched < WATCHING.saw and "saw" or "watched"
+        end
+        if kind == HELPED and c.action ~= "witness" then return "tried" end
+        if kind == AID and c.action ~= "witness" then return c.action end
+    end
+    return (kind == SAVED or kind == AID) and "survived" or "died"
+end
 
 --------------------------------------------------------------------------
 -- The People rows
@@ -67,11 +92,11 @@ Witnesses.WATCHING = WATCHING
 -- user's side only, each at the death's or the close call's own time
 -- (Capture.lua says what each takes):
 --
--- The three saved kind names are historical and stay unchanged. They
--- describe targeting/combat observations before a death or in a survived
--- fight (Capture.lua), not proven actions by the other player.
--- context.watched and context.pct remain stored for compatibility; neither
--- establishes attention, rescue, or measured remaining health.
+-- The three historical kinds remain readable. Version-one evidence adds
+-- a continuous watch or a directly attributed intervention; helped_you
+-- keeps the latter when the user survived. Nothing infers rescue or health
+-- left from damage totals. A killed threat need not be the eventual killer,
+-- so fatal-aid words do not join the action's creature to the death.
 --
 -- Each carries the creature ({ npcID, name, rank } in context) where one
 -- was known. Always a line (`moment`); the picker says why it offers them.
@@ -79,12 +104,12 @@ Witnesses.WATCHING = WATCHING
 -- "helped"): the core's index reads it (Journey.WitnessIndex), and the
 -- card keeps the existing selection order. It is not an action claim.
 --
--- Targeting can be unrelated to the player's fight. A remembered target
--- also need not be the killer or the other player's foe, so these rows
--- name neither an inferred cause nor a health value.
+-- Targeting can be unrelated to the player's fight. Historical rows name
+-- neither an inferred cause nor a health value. New action rows name a
+-- creature only for an attributed killing blow on the exact observed threat.
 
 local TT = ns.UI.TimelineText
-local Place = TT.Place
+local Place, Foe = TT.Place, TT.Foe
 local L, Fmt = ns.L, ns.Fmt
 
 local function Always() return true end
@@ -109,11 +134,36 @@ local function DeathText(row, guid, unplaced)
     return ns.UI.Format.You(row.me, Fmt(template, them, zone))
 end
 
+local WATCHED_WORDS = {
+    watched = { zone = L["%1$s watched {you} die %2$s##zone"], alone = L["%s watched {you} die"] },
+    saw = { zone = L["%1$s saw {you} die %2$s##zone"], alone = L["%s saw {you} die"] },
+}
+
+local function WitnessReason(row)
+    local role = Witnesses.Role(row and row.type, row and row.context)
+    if role == "saw" or role == "watched" then return L["they watched you die"] end
+    if role == "tried" then return L["they tried to save you"] end
+    return L["they were seen around the time you died"]
+end
+
 ns.Rows.Register(WATCHED, { witness = "watched", plate = 3, moment = Always,
-    reason = L["they were seen around the time you died"], text = DeathText, icon = "around" })
+    reason = WitnessReason, text = function(row, guid, unplaced)
+        local c = row.context or {}
+        local words = WATCHED_WORDS[Witnesses.Role(WATCHED, c)]
+        if not words then return DeathText(row, guid, unplaced) end
+        local them = guid and ns.Characters.Name(guid) or L["Someone"]
+        local zone = Where(row, c.subZone, unplaced)
+        return ns.UI.Format.You(row.me, Fmt(zone and words.zone or words.alone, them, zone))
+    end, icon = "around" })
 
 ns.Rows.Register(HELPED, { witness = "helped", plate = 3, moment = Always,
-    reason = L["they were seen around the time you died"], text = DeathText, icon = "together" })
+    reason = WitnessReason, text = function(row, guid, unplaced)
+        if Witnesses.Role(HELPED, row.context) ~= "tried" then return DeathText(row, guid, unplaced) end
+        local them = guid and ns.Characters.Name(guid) or L["Someone"]
+        local zone = Where(row, nil, unplaced)
+        return ns.UI.Format.You(row.me, Fmt(zone and L["%1$s tried to save {you} %2$s##zone"]
+            or L["%s tried to save {you}"], them, zone))
+    end, icon = "together" })
 
 ns.Rows.Register(SAVED, { witness = "helped", plate = 3, moment = Always, reason = L["they were seen during a fight you survived"],
     text = function(row, guid, unplaced)
@@ -124,6 +174,52 @@ ns.Rows.Register(SAVED, { witness = "helped", plate = 3, moment = Always, reason
         return ns.UI.Format.You(row.me, Fmt(template, them, zone))
     end,
     icon = "together" })
+
+local AID_WORDS = {
+    heal = { zone = L["%1$s healed {you} during the fight %2$s##zone"], alone = L["%s healed {you} during the fight"] },
+    absorb = { zone = L["%1$s shielded {you} during the fight %2$s##zone"], alone = L["%s shielded {you} during the fight"] },
+    dispel = { zone = L["%1$s removed a harmful effect from {you} during the fight %2$s##zone"],
+        alone = L["%s removed a harmful effect from {you} during the fight"] },
+}
+
+ns.Rows.Register(AID, { witness = "helped", plate = 3,
+    -- Ordinary support in an existing group belongs inside its exchange.
+    -- The details remain available when opened; a stranger's intervention
+    -- can stand alone without making every party pull a headline.
+    moment = function(row) return not (row and row.context and row.context.grouped == true) end,
+    reason = function(row)
+        local role = Witnesses.Role(AID, row and row.context)
+        if role == "heal" then return L["they healed you in a fight"] end
+        if role == "absorb" then return L["they shielded you in a fight"] end
+        if role == "dispel" then return L["they removed a harmful effect from you"] end
+        if role == "kill" then return ns.Plural(row.context.kills or 1,
+            L["they finished off %d foe that had been attacking you|they finished off %d foes that had been attacking you##plural"]) end
+        return L["they were seen during a fight you survived"]
+    end,
+    text = function(row, guid, unplaced)
+        local them = guid and ns.Characters.Name(guid) or L["Someone"]
+        local role = Witnesses.Role(AID, row.context)
+        local words, zone = AID_WORDS[role], Where(row, nil, unplaced)
+        -- One person lands a killing blow. Several kills are several
+        -- threats removed, never several helpers credited with one blow.
+        if role == "kill" then
+            local kills = row.context.kills or 1
+            local foe = kills == 1 and Foe(row)
+            if foe then
+                return ns.UI.Format.You(row.me, Fmt(zone and L["%1$s finished off %2$s after it had been attacking {you} %3$s##zone"]
+                    or L["%1$s finished off %2$s after it had been attacking {you}"], them, foe, zone))
+            end
+            return ns.UI.Format.You(row.me, ns.Plural(kills, zone
+                and L["%1$s finished off %2$d foe that had been attacking {you} %3$s|%1$s finished off %2$d foes that had been attacking {you} %3$s##zone##plural"]
+                or L["%1$s finished off %2$d foe that had been attacking {you}|%1$s finished off %2$d foes that had been attacking {you}##plural"],
+                them, kills, zone))
+        end
+        if not words then
+            return ns.UI.Format.You(row.me, Fmt(zone and L["%1$s was seen during a fight {you} survived %2$s##zone"]
+                or L["%s was seen during a fight {you} survived"], them, zone))
+        end
+        return ns.UI.Format.You(row.me, Fmt(zone and words.zone or words.alone, them, zone))
+    end, icon = "together" })
 
 --------------------------------------------------------------------------
 -- A moment's witnesses
@@ -148,10 +244,17 @@ function Witnesses.At(index, t, types)
     if type(t) ~= "number" then return found end
     for _, w in ipairs(index or {}) do
         if w.t > t + SLACK then break end
-        if w.t >= t - SLACK and types[w.row.type] then found[#found + 1] = w end
+        local c = w.row.context
+        -- New capture knows the exact endpoint of its encounter. It must
+        -- not attach a contribution to another fight a second or two later.
+        if w.t >= t - SLACK and types[w.row.type] and (not Witnesses.Proven(c) or c.ended == t) then
+            found[#found + 1] = w
+        end
     end
     local Get = ns.Rows.Get
     table.sort(found, function(a, b)
+        local pa, pb = Witnesses.Proven(a.row.context), Witnesses.Proven(b.row.context)
+        if pa ~= pb then return pa end
         local ha, hb = Get(a.row.type).witness == "helped", Get(b.row.type).witness == "helped"
         if ha ~= hb then return ha end
         local wa = a.row.context and a.row.context.watched or 0

@@ -5,7 +5,7 @@
 ### Fixes
 
 - _Your Diary_ now tells the outing shown on its maps
-- _Witnesses_ describe observations without assuming rescue, neglect or blame
+- _Witnesses_ distinguish sustained watching from confirmed help during fights
 
 ## [4.1.1]
 

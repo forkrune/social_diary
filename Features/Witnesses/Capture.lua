@@ -1,502 +1,397 @@
--- Witnesses' capture: targeting and combat observations around the user's
--- fights. The historical saved row kinds stay unchanged:
+-- Witnesses' capture. A target selection is not an attack, an intention,
+-- or a rescue. A death witness requires a continuous, readable targeting
+-- streak which existed before the death and is still present at it. Help
+-- requires an attributed kill of an observed threat, or Meter.lua's
+-- recipient-specific healing, absorption or dispel in one new encounter.
 --
---   watched_death  the player or a foe was targeted in a recent sample
---                  taken out of combat; context.watched is the sampled
---                  targeting streak, not time spent paying attention.
---   tried_to_help  a foe was targeted and combat was observed at some
---                  point in the fight (not necessarily together), or the
---                  player/foe was targeted before a foe died without a
---                  matching PARTY_KILL.
---   saved_you      the same candidates in a survived fight selected by
---                  the existing aggregate damage/healing threshold.
+-- The target game hides health and the combat log. Nothing here derives
+-- health from aggregate damage, promotes survival into a rescue, or awards
+-- an unclaimed kill to whoever happened to have a creature targeted.
 --
--- None of these observations establishes an attack, help, rescue, intent
--- or neglect. A missing PARTY_KILL does not identify who killed a foe.
--- context.pct is the historical aggregate estimate, not measured health
--- remaining. Keep the saved shape and selection behaviour; automatic
--- wording and cards never present these inferences as observed facts.
--- Explicit player interpretations use the separate Written path.
---
--- Group members are left out: their fights with the user are the
--- session's (Core/Sessions.lua), and the group's healers would look on.
---
--- When it runs: this file is listed in the TOC after Capture/, where its
--- old file (Capture/Witnesses.lua) was, not in the features' block, so on
--- every client event it shares with Capture/ its handlers still run last,
--- as before the move. It reads the same units as Capture/Nearby.lua
--- (NAME_PLATE_UNIT_ADDED, PLAYER_TARGET_CHANGED): a look it reads in a
--- fight puts what the unit shows on the character's record
--- (Characters.ObserveUnit), and Nearby's reunion toast, run first, has
--- taken its snapshot of a diary entry (their name) before that, as it
--- always did (tests/witnesses.lua, "after the reunion toast").
--- PLAYER_DEAD after Deaths' and the route's count (Capture/Journey.lua),
--- PARTY_KILL after World PvP's, Together's and Combat's, and the fight's
--- start and end after the route's and the close-call judge's, likewise
--- (the judge in the features' block since 15 Oct, still before this).
--- The judge (Features/CloseCalls/Capture.lua) tells a fight the user survived as
--- SD_FIGHT_SURVIVED (Core/Events.lua's header) where it called
--- Witnesses.Survived before the move; dispatch is synchronous, so the
--- witness rows are written at the same point (inside the dispatcher's
--- pcall now, so an error here no longer unwinds the judge: its close call
--- is still kept).
+-- This file stays after Capture/ in the TOC. Nearby's reunion snapshot is
+-- therefore taken before a witness first observes a character. The meter
+-- helper is loaded directly before this file; the feature owns all these
+-- listeners and writes no new core event or schema.
 
 local addonName, ns = ...
-
 local Witnesses = ns.Witnesses
+local Meter = Witnesses.Meter
+local WAIT = { scan = 1, gap = Witnesses.WATCHING.gap, death = 5, settle = 5 }
+local POINTED = { "target", "focus", "mouseover" }
+local POINT = { target = true, focus = true, mouseover = true }
+local fights, ambient, ticker = {}, nil, nil
+local KEEP = 3
 
-local WATCHED, HELPED, SAVED_ROW = Witnesses.WATCHED, Witnesses.HELPED, Witnesses.SAVED
+local function Clock() return GetTime and GetTime() or ns.Now() end
 
--- Existing aggregate threshold for selecting survived fights. It does not
--- measure remaining health (ns.CloseCalls.LEFT is the stricter threshold).
-local SAVED = 0.20
-
--- Seconds. watch: how long before the death a look still counts. scan: how
--- often the plates are read in a fight (combat starts and stops without a
--- target changing). fight: a fight ended this long before the death is
--- still the one died in (the client can leave combat a moment before
--- PLAYER_DEAD). match: how far apart the close-call judge's start and this
--- file's may be. kill: how long PARTY_KILL may trail a foe's death.
-local WAIT = { watch = 10, scan = 1, fight = 5, match = 2, kill = 0.5 }
-
--- What breaks a sampled targeting streak (`gap`): Kind.lua's WATCHING.
--- The duration does not change the automatic words.
-local WATCHING = Witnesses.WATCHING
-
--- A clock to the fraction of a second, for how long someone looked: the
--- server's is in whole seconds.
-local function Clock()
-    return GetTime and GetTime() or ns.Now()
+local function Flag(fn, unit)
+    if type(fn) ~= "function" then return nil end
+    return ns.Plain(fn(unit))
 end
 
--- The fights, newest last, the last few kept for the close-call judge,
--- which reads a moment after the fight: { started, ended, foes = { [guid]
--- = true }, on = { [guid] = time last seen with the user targeted },
--- looked = { [guid] = the same, out of combat }, aimed = { [guid] = {
--- [creature guid] = time last seen with it targeted } }, eyed = the same
--- out of combat, fought = { [guid] = true }, rescuers = { [guid] = true },
--- streak = { [guid] = { from, last, broken } on Clock(): the latest
--- unbroken look at the user or a foe }, names = { [guid] = name } for /sd debug }.
-local fights = {}
-local KEEP = 3
-local ticker
+local function Visible(unit)
+    return ns.Plain(UnitExists(unit)) == true
+        and (not UnitIsVisible or ns.Plain(UnitIsVisible(unit)) == true)
+end
 
 local function Current()
     local f = fights[#fights]
-    return f and not f.ended and f or nil
+    return f and not f.ended and not f.death and not f.cancelled and f or nil
 end
 
---------------------------------------------------------------------------
--- Reading the plates
---------------------------------------------------------------------------
-
-local LOOKERS = { "target", "focus", "mouseover" }
-local LOOKER = { target = true, focus = true, mouseover = true }
-
-local function Looker(unit)
-    return type(unit) == "string" and (LOOKER[unit] or unit:match("^nameplate%d+$") ~= nil)
+local function NewFight(ambientOnly)
+    local first, surname = ns.NameFromUnit("player")
+    return { started = ns.Now(), clock = Clock(), foes = {}, people = {}, streak = {},
+        aids = {}, killed = {}, forgotten = {}, ambient = ambientOnly, ownerName = ns.JoinName(first, surname) }
 end
 
-local function Flag(fn, unit)
-    return ns.Plain(fn(unit)) == true
+local function Ambient()
+    if not ambient then ambient = NewFight(true) end
+    return ambient
 end
 
-local function Hostile(unit)
-    return ns.Plain(UnitCanAttack("player", unit)) == true
-end
-
-local function NewFight(now)
-    return { started = now, foes = {}, on = {}, looked = {}, aimed = {}, eyed = {}, fought = {}, rescuers = {},
-        streak = {}, names = {} }
-end
-
---------------------------------------------------------------------------
--- /sd debug: a trace, kept in the saved diary as well (witnessTrace, the
--- newest TRACE lines) so a test in the client can be read afterwards.
---------------------------------------------------------------------------
-
-local TRACE = 600
-
-local function Keep(line)
-    local log = ns.db.witnessTrace
-    if type(log) ~= "table" then
-        log = {}
-        ns.db.witnessTrace = log
-    end
-    log[#log + 1] = date("%H:%M:%S", ns.Now()) .. " " .. line
-    while #log > TRACE do table.remove(log, 1) end
-end
-
--- To the chat and the saved trace; `quiet` the trace only.
-local function Trace(quiet, msg, ...)
+local function Trace(message, ...)
     if not ns.DebugOn() then return end
-    if select("#", ...) > 0 then msg = msg:format(...) end
-    if not quiet then ns.Debug("witnesses: %s", msg) end
-    Keep(msg)
+    if select("#", ...) > 0 then message = message:format(...) end
+    ns.Debug("witnesses: %s", message)
+    local log = ns.db.witnessTrace
+    if type(log) ~= "table" then log = {}; ns.db.witnessTrace = log end
+    log[#log + 1] = date("%H:%M:%S", ns.Now()) .. " " .. message
+    while #log > 600 do table.remove(log, 1) end
 end
 
--- What a creature's GUID is called, as last read off `unit`, with the end
--- of the GUID: one Kobold Vermin among many is told apart by it. Players go
--- by their names.
-local function Named(f, guid, unit)
-    if ns.DebugOn() and type(guid) == "string" and not f.names[guid] and not ns.SafeGUID(guid) then
-        local name = ns.Plain((UnitName(unit)))
-        f.names[guid] = (type(name) == "string" and name or "?") .. " ~" .. guid:sub(-5)
-    end
+local function Each(fn)
+    for _, unit in ipairs(POINTED) do fn(unit) end
+    for _, unit in ipairs(ns.Units.Plates) do fn(unit) end
+    for _, unit in ipairs(ns.Units.Group()) do fn(unit) end
 end
 
-local function Label(f, guid)
-    if not guid then return "nobody" end
-    return f.names[guid] or ns.Characters.FullName(guid) or guid
-end
-
--- A creature that can attack the user and has them targeted is a foe.
-local function Creature(f, unit, target)
+-- An exact creature GUID, observed in combat with the player targeted.
+-- Clicking a hostile creature, or seeing one idle nearby, is not enough.
+local function Creature(f, unit)
+    if f.ambient or not Visible(unit) then return end
     local guid = ns.Plain(UnitGUID(unit))
-    if target ~= ns.ownGUID or f.foes[guid] or not ns.NpcID(guid) or not Hostile(unit) then return end
-    Named(f, guid, unit)
-    Trace(false, "%s is on you", Label(f, guid))
-    f.foes[guid] = true
+    local npcID = ns.NpcID(guid)
+    if not npcID or ns.Plain(UnitCanAttack("player", unit)) ~= true
+        or Flag(UnitAffectingCombat, unit) ~= true or Flag(UnitIsDeadOrGhost, unit) ~= false
+        or ns.Plain(UnitGUID(unit .. "target")) ~= ns.ownGUID then return end
+    local name = ns.Plain((UnitName(unit)))
+    local rank = UnitClassification and ns.Plain(UnitClassification(unit))
+    f.foes[guid] = { npcID = npcID, name = type(name) == "string" and name or nil,
+        rank = type(rank) == "string" and rank ~= "normal" and rank or nil, last = Clock() }
+    f.liveFoes[guid] = true
 end
 
--- What `unit` is doing in fight `f`: a foe's target, or a stranger's look
--- or fight.
-local function Read(f, unit)
-    if not ns.Plain(UnitExists(unit)) then return end
-    local target = ns.Plain(UnitGUID(unit .. "target"))
-    local guid = ns.PlayerGUIDFromUnit(unit)
-    if not guid then return Creature(f, unit, target) end
-    if ns.Roster.Has(guid) or Hostile(unit) then return end
-    if Flag(UnitIsDeadOrGhost, unit) or Flag(UnitIsAFK, unit) then return end
-
-    local fighting = Flag(UnitAffectingCombat, unit)
-    -- How long they have been looking on, unbroken. A broken look is kept,
-    -- for as long as it ran, until the next one begins.
+local function Person(f, unit, seen)
+    if ns.Plain(UnitExists(unit)) ~= true then return end
+    local guid = ns.SafeGUID(UnitGUID(unit))
+    if not guid or guid == ns.ownGUID then return end
+    -- Identity ambiguity is useful even when this person is not an
+    -- eligible helper: an AFK, dead or distant namesake may have been a
+    -- meter spell's recipient earlier in this same encounter.
+    local first, surname = ns.NameFromUnit(unit)
+    if f.ownerName and ns.JoinName(first, surname) == f.ownerName then f.ambiguousOwner = true end
+    if not Visible(unit) or f.forgotten[guid] then return end
+    if seen then seen[guid] = true end
     local streak = f.streak[guid]
-    if not fighting and (target == ns.ownGUID or f.foes[target]) then
-        local now = Clock()
-        if not streak or streak.broken or now - streak.last > WATCHING.gap then
-            streak = { from = now }
-            f.streak[guid] = streak
-        end
-        streak.last = now
-    elseif streak then
-        streak.broken = true
+    local fighting, dead, afk = Flag(UnitAffectingCombat, unit), Flag(UnitIsDeadOrGhost, unit), Flag(UnitIsAFK, unit)
+    -- Unknown is not false. In particular a restricted AFK/combat value
+    -- must not create the appearance of an idle, deliberate spectator.
+    if ns.Plain(UnitCanAttack("player", unit)) ~= false or dead ~= false or afk ~= false
+        or (fighting ~= true and fighting ~= false) then
+        if streak then streak.broken = true end
+        if f.people[guid] then f.people[guid].uncertain = true end
+        return
     end
-    if fighting and not f.fought[guid] then
-        ns.Characters.ObserveUnit(unit)
-        Trace(false, "%s is in combat", Label(f, guid))
-        f.fought[guid] = true
+    local now = Clock()
+    local target = ns.Plain(UnitGUID(unit .. "target"))
+    if f.ambient and target ~= ns.ownGUID then
+        if streak then streak.broken = true end
+        return
     end
-    if target == ns.ownGUID then
-        f.on[guid] = ns.Now()
-        if not fighting then
-            if not f.looked[guid] then
-                ns.Characters.ObserveUnit(unit)
-                Trace(false, "%s has you targeted", Label(f, guid))
-            end
-            f.looked[guid] = ns.Now()
-        end
-    elseif ns.NpcID(target) then
-        f.aimed[guid] = f.aimed[guid] or {}
-        if not f.aimed[guid][target] then
-            ns.Characters.ObserveUnit(unit)
-            Named(f, target, unit .. "target")
-            Trace(false, "%s has %s targeted", Label(f, guid), Label(f, target))
-        end
-        f.aimed[guid][target] = ns.Now()
-        if not fighting then
-            f.eyed[guid] = f.eyed[guid] or {}
-            f.eyed[guid][target] = ns.Now()
-        end
+    local person = f.people[guid]
+    if not person then
+        local record = ns.Characters.ObserveUnit(unit)
+        if not record then return end
+        person = { record = record }
+        f.people[guid] = person
     end
-end
-
--- The creature the user has targeted, if one that can attack them:
--- { npcID, name, rank }, for the line to name it. Nil otherwise.
-local function Foe()
-    if not ns.Plain(UnitExists("target")) or not Hostile("target") then return nil end
-    local npcID = ns.NpcID(UnitGUID("target"))
-    local name = ns.Plain((UnitName("target")))
-    if not npcID or type(name) ~= "string" then return nil end
-    local rank = UnitClassification and ns.Plain(UnitClassification("target"))
-    return { npcID = npcID, name = name, rank = rank ~= "normal" and rank or nil }
-end
-
--- The user's target, when a foe, is the one the line names: the target is
--- gone by the time PLAYER_DEAD fires (probe, 14 Oct), so it is kept as the
--- fight goes. Being the target does not make a foe: a creature clicked or
--- tabbed to is not fighting the user (seen in the client, 14 Oct).
-local function Mine(f)
-    Read(f, "target")
-    if f.foes[ns.Plain(UnitGUID("target"))] then f.foe = Foe() or f.foe end
+    person.last, person.unit = now, unit
+    person.grouped = ns.Roster.Has(guid) == true
+    local session = ns.Sessions.Current()
+    person.session = session and session.participants[guid] and session.id or nil
+    local looking = fighting == false and not ns.Roster.Has(guid)
+        and (target == ns.ownGUID or f.liveFoes[target] == true)
+    if not looking then
+        if streak then streak.broken = true end
+        return
+    end
+    if not streak or streak.broken or now - streak.last > WAIT.gap or now < streak.last then
+        streak = { from = now, last = now, samples = 1, target = target }
+        f.streak[guid] = streak
+    elseif now > streak.last then
+        streak.last, streak.samples, streak.target = now, streak.samples + 1, target
+    end
 end
 
 local function ReadAll(f)
-    for _, unit in ipairs(LOOKERS) do Read(f, unit) end
-    for _, unit in ipairs(ns.Units.Plates) do Read(f, unit) end
-    Mine(f)
+    -- First find threats so a person's position in the token list cannot
+    -- decide whether their target is recognised as part of this fight.
+    f.liveFoes = {}
+    Each(function(unit) Creature(f, unit); Creature(f, unit .. "target") end)
+    local seen = {}
+    Each(function(unit) Person(f, unit, seen) end)
+    for guid, streak in pairs(f.streak) do
+        if not seen[guid] then streak.broken = true end
+    end
 end
 
--- Historical helper candidates: target and combat observations may be
--- separated or unrelated. Finished adds target coincidences at a foe's
--- death, not a confirmed killer. These candidates only establish presence.
-local function Helpers(f)
-    local helpers = {}
-    for guid in pairs(f.rescuers) do helpers[guid] = true end
-    for guid, targets in pairs(f.aimed) do
-        if f.fought[guid] then
-            for target in pairs(targets) do
-                if f.foes[target] then
-                    helpers[guid] = true
-                    break
-                end
+local function StillKnown(f, guid)
+    local person = f.people[guid]
+    return person and ns.Characters.Get(guid) == person.record
+end
+
+local PRIORITY = { "heal", "absorb", "dispel", "kill" }
+local COUNTERS = { heal = "healed", absorb = "absorbed", dispel = "dispelled", kill = "kills" }
+
+local function Aid(f, guid)
+    if not f.aids[guid] then f.aids[guid] = {} end
+    return f.aids[guid]
+end
+
+local function Write(f, guid, kind, context)
+    if f.cancelled or not StillKnown(f, guid) then return end
+    context.evidence, context.started, context.ended = 1, f.started, f.death or f.ended
+    local person = f.people[guid]
+    context.grouped = person.grouped or nil
+    ns.Interactions.Add(guid, kind, { time = f.death or f.ended, where = f.where, context = context,
+        session = person.session or false })
+    Trace("%s: %s (%s)", kind, ns.Characters.FullName(guid) or guid, context.method)
+end
+
+local function Finalize(f)
+    if f.finalized or f.cancelled then return end
+    f.finalized = true
+    for guid, aid in pairs(f.aids) do
+        local context = {}
+        for _, action in ipairs(PRIORITY) do
+            local amount = aid[action]
+            if amount and amount > 0 then
+                context[COUNTERS[action]] = amount
+                if not context.action then context.action, context.amount = action, amount end
             end
         end
-    end
-    return helpers
-end
-
---------------------------------------------------------------------------
--- Writing
---------------------------------------------------------------------------
-
--- For /sd debug: which observations selected candidates, without claiming
--- they helped or were fighting the user's foes.
-local function Judged(f, helpers, what)
-    if not ns.DebugOn() then return end
-    local foes, helped, other = {}, {}, {}
-    for guid in pairs(f.foes) do foes[#foes + 1] = Label(f, guid) end
-    for guid in pairs(helpers) do helped[#helped + 1] = Label(f, guid) end
-    for guid in pairs(f.fought) do
-        if not helpers[guid] then other[#other + 1] = Label(f, guid) end
-    end
-    Trace(false, "%s; foes: %s; candidates: %s; other combat observations: %s", what,
-        #foes > 0 and table.concat(foes, ", ") or "none",
-        #helped > 0 and table.concat(helped, ", ") or "nobody", #other > 0 and table.concat(other, ", ") or "nobody")
-end
-
--- `extra` adds to the shared `context`, for this row only.
-local function Write(guid, kind, time, where, context, extra)
-    local copy = {}
-    for key, value in pairs(context) do copy[key] = value end
-    for key, value in pairs(extra or {}) do copy[key] = value end
-    local row = ns.Interactions.Add(guid, kind, { time = time, where = where, context = copy })
-    Trace(false, "%s %s%s", kind, ns.Characters.FullName(guid) or guid,
-        copy.watched and (" (%.1f s)"):format(copy.watched) or "")
-    return row
-end
-
--- For the trace: every player the client can point at, and what they are
--- doing, whether or not it counts for anything. Why someone was missed.
-local function Snapshot(f, why)
-    if not ns.DebugOn() then return end
-    local plates, players = 0, 0
-    for _, unit in ipairs(ns.Units.Plates) do
-        if ns.Plain(UnitExists(unit)) then
-            plates = plates + 1
-            if ns.PlayerGUIDFromUnit(unit) then players = players + 1 end
+        if context.action then
+            context.method = context.action == "kill" and "party_kill" or "meter"
+            context.meterSession = aid.meterSession
+            -- One attributed creature only. A single card must not name
+            -- whichever of several foes happened to be targeted last.
+            if context.action == "kill" and aid.foe and not aid.many then
+                context.npcID, context.name, context.rank = aid.foe.npcID, aid.foe.name, aid.foe.rank
+            end
+            Write(f, guid, f.death and Witnesses.HELPED or Witnesses.AID, context)
         end
     end
-    Trace(true, "%s: %d plate(s), %d of players", why, plates, players)
-    local seen = {}
-    local function One(unit)
-        local guid = ns.PlayerGUIDFromUnit(unit)
-        if not guid or seen[guid] then return end
-        seen[guid] = true
-        ns.Characters.ObserveUnit(unit)
-        local target = ns.Plain(UnitGUID(unit .. "target"))
-        Named(f, target, unit .. "target")
-        Trace(true, "  %s [%s]: target %s%s, combat %s%s%s%s%s", Label(f, guid), unit,
-            target == ns.ownGUID and "YOU" or Label(f, target), f.foes[target] and " (your foe)" or "",
-            tostring(ns.Plain(UnitAffectingCombat(unit))),
-            Flag(UnitIsAFK, unit) and ", AFK" or "", Flag(UnitIsDeadOrGhost, unit) and ", dead" or "",
-            Hostile(unit) and ", hostile" or "", ns.Roster.Has(guid) and ", group" or "")
-    end
-    for _, unit in ipairs(LOOKERS) do One(unit) end
-    for _, unit in ipairs(ns.Units.Plates) do One(unit) end
-end
-
--- Who was looking, out of combat, in the last WAIT.watch seconds before
--- `now`: at the user, or at one of their foes.
-local function Onlookers(f, now)
-    local list = {}
-    for guid, seen in pairs(f.looked) do
-        if now - seen <= WAIT.watch then list[guid] = true end
-    end
-    for guid, creatures in pairs(f.eyed) do
-        for creature, seen in pairs(creatures) do
-            if f.foes[creature] and now - seen <= WAIT.watch then list[guid] = true end
+    for guid, watched in pairs(f.witnesses or {}) do
+        if not f.aids[guid] then
+            Write(f, guid, Witnesses.WATCHED, { method = "target_streak", action = "witness",
+                watched = watched, subZone = f.where and f.where.subZone })
         end
     end
-    return list
+end
+
+local function Finish(f)
+    if f.finishing or f.cancelled then return end
+    f.finishing = true
+    f.ended = f.ended or f.death or ns.Now()
+    f.where = f.where or ns.Where()
+    if f.ambient then Finalize(f); return end
+    Meter.Finish(f, function(values, sessionID)
+        if f.cancelled or f.finalized then return end
+        for guid, valuesForPerson in pairs(values or {}) do
+            if StillKnown(f, guid) then
+                local aid = Aid(f, guid)
+                for action, amount in pairs(valuesForPerson) do aid[action] = amount end
+                aid.meterSession = sessionID
+            end
+        end
+        f.meterDone = true
+        if f.death or f.settled then Finalize(f) end
+    end)
+    -- PLAYER_REGEN_ENABLED can precede PLAYER_DEAD. Give that ordering
+    -- its existing leeway before deciding whether the encounter survived.
+    ns.After(WAIT.settle, function()
+        f.settled = true
+        if f.meterDone then Finalize(f) end
+    end)
+end
+
+local function Scan()
+    if ns.InBattleground() or Flag(UnitIsDeadOrGhost, "player") ~= false then return end
+    local f = Current() or Ambient()
+    ReadAll(f)
+    if f.ambient then
+        local any = false
+        for _, streak in pairs(f.streak) do if not streak.broken then any = true; break end end
+        if not any and ticker then ticker.Cancel(); ticker = nil; ambient = nil end
+    end
+end
+
+local function Tick()
+    if not ticker then ticker = ns.Every(WAIT.scan, Scan) end
+end
+
+local function Observe()
+    if ns.InBattleground() or Flag(UnitIsDeadOrGhost, "player") ~= false then return end
+    local f = Current() or Ambient()
+    ReadAll(f)
+    for _, streak in pairs(f.streak) do if not streak.broken then Tick(); return end end
+    if f.ambient then ambient = nil end
 end
 
 local function Died()
-    if ns.InBattleground() or ns.Feigning("player") then return end
-    local now = ns.Now()
+    if ns.InBattleground() or ns.Feigning("player") or (ns.Duelling and ns.Duelling()) then return end
+    local now, at = ns.Now(), Clock()
     local f = fights[#fights]
-    if not f or (f.ended and now - f.ended > WAIT.fight) then
-        -- Not in a fight (a fall): only who looked on.
-        f = NewFight(now)
+    if not f or f.finalized or f.cancelled
+        or (f.ended and (not f.endedDead or now - f.ended > WAIT.death)) then f = ambient end
+    if not f or f.death then return end
+    -- Capture the pre-death streak first. ReadAll at the death may
+    -- corroborate it, but can never turn a first look into a witness.
+    local before = {}
+    for guid, streak in pairs(f.streak) do
+        if not streak.broken and streak.samples >= 2 and streak.from < at and at - streak.last <= WAIT.gap then
+            before[guid] = { from = streak.from, last = streak.last }
+        end
     end
-    -- Sample the targeting context at the user's death.
     ReadAll(f)
-    Snapshot(f, "you died")
-
-    local where, context = ns.Where(), f.foe or {}
-    local helpers = Helpers(f)
-    Judged(f, helpers, "you died")
-    for guid in pairs(helpers) do Write(guid, HELPED, now, where, context) end
-    for guid in pairs(Onlookers(f, now)) do
-        if not helpers[guid] then
-            -- One looking on through to the death was read by ReadAll just
-            -- now; a look broken before it counts for as long as it ran.
-            local streak = f.streak[guid]
-            local watched = streak and math.floor((streak.last - streak.from) * 10 + 0.5) / 10 or 0
-            Write(guid, WATCHED, now, where, context, { watched = watched, subZone = where.subZone })
+    f.witnesses = {}
+    for guid, previous in pairs(before) do
+        local streak = f.streak[guid]
+        if streak and not streak.broken and streak.from == previous.from and streak.last == at then
+            f.witnesses[guid] = math.floor((at - previous.from) * 10 + 0.5) / 10
         end
     end
+    f.death, f.where = now, ns.Where()
+    if ticker then ticker.Cancel(); ticker = nil end
+    ambient = nil
+    Finish(f)
 end
 
--- The close-call judge's word (Features/CloseCalls/Capture.lua,
--- SD_FIGHT_SURVIVED, once the damage meter reads): a fight from `started`
--- to `ended` that did
--- `taken` damage, less the healing the meter lists, against `max` health;
--- `foe` the creature fought most ({ npcID, name, rank }, or nil).
-function Witnesses.Survived(started, ended, taken, max, foe)
-    if type(taken) ~= "number" or type(max) ~= "number" or max <= 0 then return end
-    if taken / max < 1 - SAVED then return end
-    local f
-    for i = #fights, 1, -1 do
-        if math.abs(fights[i].started - started) <= WAIT.match then
-            f = fights[i]
-            break
-        end
-    end
-    if not f then
-        Trace(false, "no matching fight was observed")
-        return
-    end
-    local helpers = Helpers(f)
-    Judged(f, helpers, ("you survived; aggregate net damage %s, max health %s"):format(taken, max))
-    local pct = math.max(1, math.min(math.floor(SAVED * 100), 100 - math.floor(taken / max * 100 + 0.5)))
-    local context = { pct = pct, npcID = foe and foe.npcID, name = foe and foe.npcID and foe.name or nil,
-        rank = foe and foe.npcID and foe.rank or nil }
-    local where = ns.Where()
-    for guid in pairs(helpers) do Write(guid, SAVED_ROW, ended, where, context) end
-end
-
---------------------------------------------------------------------------
--- The fight
---------------------------------------------------------------------------
-
-local function Scan()
-    local f = Current()
-    if f then ReadAll(f) end
-end
-
--- No fight is watched in a battleground (ns.InBattleground): nobody there
--- looks on, and the user's deaths and close calls in one are kept nowhere.
 ns.On("PLAYER_REGEN_DISABLED", function()
-    if ns.InBattleground() then return end
-    fights[#fights + 1] = NewFight(ns.Now())
+    if Current() or ns.InBattleground() or Flag(UnitIsDeadOrGhost, "player") ~= false
+        or (ns.Duelling and ns.Duelling()) then return end
+    local previous = fights[#fights]
+    if previous and previous.finishing and not previous.finalized then
+        Meter.Cancel(previous)
+        Finalize(previous)
+    end
+    local f = NewFight()
+    fights[#fights + 1] = f
     while #fights > KEEP do table.remove(fights, 1) end
-    Trace(true, "fight begins")
-    Scan()
-    Snapshot(fights[#fights], "at the start")
-    if not ticker then ticker = ns.Every(WAIT.scan, Scan) end
+    ambient = nil
+    Meter.Start(f)
+    ReadAll(f)
+    Tick()
 end)
 
 ns.On("PLAYER_REGEN_ENABLED", function()
     local f = Current()
     if f then
-        -- The last look: someone's target as the fight ends counts too.
         ReadAll(f)
-        if not ns.Plain(UnitIsDeadOrGhost("player")) then Snapshot(f, "fight over") end
-        f.ended = ns.Now()
-    end
-    if ticker then
-        ticker.Cancel()
-        ticker = nil
-    end
+        f.ended, f.where = ns.Now(), ns.Where()
+        f.endedDead = Flag(UnitIsDeadOrGhost, "player") == true
+        if ns.Duelling and ns.Duelling() then f.cancelled = true; Meter.Cancel(f) end
+        Finish(f)
+    elseif not fights[#fights] then Meter.Snapshot() end
+    if ticker then ticker.Cancel(); ticker = nil end
+    Observe()
 end)
 
-ns.On("PLAYER_TARGET_CHANGED", function()
+ns.On("PARTY_KILL", function(_, attacker, victim)
     local f = Current()
-    if f then Mine(f) end
-end)
-
-ns.On("UNIT_TARGET", function(_, unit)
-    local f = Current()
-    if f and Looker(unit) then Read(f, unit) end
-end)
-
-ns.On("NAME_PLATE_UNIT_ADDED", function(_, unit)
-    local f = Current()
-    if f then Read(f, unit) end
+    attacker, victim = ns.SafeGUID(attacker), ns.Plain(victim)
+    if not f or not attacker or attacker == ns.ownGUID or type(victim) ~= "string" or f.killed[victim] then return end
+    local foe, person = f.foes[victim], f.people[attacker]
+    if not foe or not person or Clock() - person.last > WAIT.gap or not StillKnown(f, attacker) then return end
+    -- A known actor must still be this friendly, living player, rather
+    -- than a recycled nameplate or a character observed before a duel.
+    local unit = person.unit
+    if not Visible(unit) or ns.SafeGUID(UnitGUID(unit)) ~= attacker
+        or ns.Plain(UnitCanAttack("player", unit)) ~= false
+        or Flag(UnitIsDeadOrGhost, unit) ~= false or Flag(UnitIsAFK, unit) ~= false then return end
+    f.killed[victim] = true
+    local aid = Aid(f, attacker)
+    aid.kill = (aid.kill or 0) + 1
+    if aid.victim and aid.victim ~= victim then aid.many = true end
+    aid.victim, aid.foe = victim, foe
 end)
 
 ns.On("PLAYER_DEAD", Died)
-
-ns.On("SD_FIGHT_SURVIVED", function(_, started, ended, taken, max, foe)
-    Witnesses.Survived(started, ended, taken, max, foe)
-end)
-
---------------------------------------------------------------------------
--- A foe's death without a matching group kill
---------------------------------------------------------------------------
---
--- Preserve the existing candidate selection when UNIT_DIED has no matching
--- PARTY_KILL. Those who recently targeted the user or the foe are candidates
--- only: the missing event cannot identify a finisher or their intention.
-
-local ours = {}  -- [creature guid] = time of the PARTY_KILL
-
-ns.On("PARTY_KILL", function(_, _, victim)
-    victim = ns.Plain(victim)
-    if type(victim) ~= "string" then return end
-    local now = ns.Now()
-    -- Only a foe's death reads it back, so the rest are let go.
-    for guid, t in pairs(ours) do
-        if now - t > 60 then ours[guid] = nil end
-    end
-    ours[victim] = now
-end)
-
-local function Finished(f, victim, at)
-    local found = {}
-    for guid, seen in pairs(f.on) do
-        if at - seen <= WAIT.watch then found[guid] = true end
-    end
-    for guid, targets in pairs(f.aimed) do
-        if targets[victim] and at - targets[victim] <= WAIT.watch then found[guid] = true end
-    end
-    local names = {}
-    for guid in pairs(found) do
-        f.rescuers[guid] = true
-        names[#names + 1] = Label(f, guid)
-    end
-    Trace(false, "%s died without a matching PARTY_KILL; targeting candidates: %s", Label(f, victim),
-        #names > 0 and table.concat(names, ", ") or "none")
-end
-
-ns.On("UNIT_DIED", function(_, guid)
-    guid = ns.Plain(guid)
+ns.On("SD_DUEL_FINISHED", function()
     local f = fights[#fights]
-    if type(guid) ~= "string" or not f or not f.foes[guid] then return end
-    if f.ended and ns.Now() - f.ended > WAIT.fight then return end
-    local at = ns.Now()
-    -- PARTY_KILL comes first in the client, but is not waited on blindly.
-    ns.After(WAIT.kill, function()
-        local kill = ours[guid]
-        ours[guid] = nil
-        if not (kill and math.abs(kill - at) <= WAIT.fight) then Finished(f, guid, at) end
-    end)
+    if f and not f.finalized then f.cancelled = true; Meter.Cancel(f) end
+    ambient = nil
+end)
+ns.On("PLAYER_TARGET_CHANGED", Observe)
+ns.On("PLAYER_FOCUS_CHANGED", Observe)
+ns.On("UPDATE_MOUSEOVER_UNIT", Observe)
+ns.On("NAME_PLATE_UNIT_ADDED", Observe)
+ns.On("NAME_PLATE_UNIT_REMOVED", Observe)
+ns.On("GROUP_ROSTER_UPDATE", Observe)
+ns.On("UNIT_TARGET", function(_, unit)
+    unit = ns.Plain(unit)
+    if type(unit) == "string" and (POINT[unit] or unit:match("^nameplate%d+$")
+        or unit:match("^party%d+$") or unit:match("^raid%d+$")) then Observe() end
 end)
 
-function ns._test.Witnesses()
-    return fights[#fights]
+local function Reset()
+    for _, f in ipairs(fights) do f.cancelled = true; Meter.Cancel(f) end
+    fights, ambient = {}, nil
+    if ticker then ticker.Cancel(); ticker = nil end
+    Meter.Reset()
+    Meter.Snapshot()
 end
 
+ns.On("PLAYER_ENTERING_WORLD", Reset)
+ns.On("PLAYER_LEAVING_WORLD", Reset)
+ns.On("SD_DIARY_CHANGED", Reset)
+ns.On("PLAYER_ALIVE", function()
+    for _, f in ipairs(fights) do if f.death then Meter.Cancel(f); Finalize(f) end end
+    Meter.Snapshot()
+end)
+ns.On("PLAYER_UNGHOST", function()
+    for _, f in ipairs(fights) do if f.death then Meter.Cancel(f); Finalize(f) end end
+    Meter.Snapshot()
+end)
+
+-- Deferred meter work is a store too: forgetting a person removes the
+-- pending evidence immediately, even when the caller does not fire a UI
+-- refresh. It cannot later put their row or character back in the diary.
+ns.RegisterStore("witnesses", function(guid)
+    local function Forget(f)
+        if not f then return end
+        if guid == nil then
+            f.cancelled = true
+            Meter.Cancel(f)
+        else
+            f.forgotten[guid] = true
+            f.people[guid], f.streak[guid], f.aids[guid] = nil, nil, nil
+            if f.witnesses then f.witnesses[guid] = nil end
+        end
+    end
+    for _, f in ipairs(fights) do Forget(f) end
+    Forget(ambient)
+    if guid == nil then
+        fights, ambient = {}, nil
+        if ticker then ticker.Cancel(); ticker = nil end
+        Meter.Reset()
+    end
+end)
+
+-- The old close-call message has no attributable action or measured
+-- health. Kept as a no-op for callers; automatic rescue rows are retired.
+function Witnesses.Survived() end
+
+function ns._test.Witnesses() return fights[#fights] or ambient end
 ns._test.WitnessesScan = Scan

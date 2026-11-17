@@ -123,6 +123,67 @@ local function Plain(text, what)
     Check(not text:find("[{}<>]"), what .. " left a grammar marker: " .. text)
 end
 
+-- Exact expected words are independent of the translation table. In
+-- particular the shared diary changes the recipient, while the named
+-- helper remains female. The plural deeds have no implied second action.
+local PROVEN = {
+    deDE = {
+        heal = { { "Mira hat dich im Kampf geheilt", "Mira hat dich im Kampf in Mulgore geheilt" },
+            { "Mira hat Aila im Kampf geheilt", "Mira hat Aila im Kampf in Mulgore geheilt" } },
+        deeds = { "hat dich geheilt", "hat dich mit einem Schild geschützt", "hat einen schädlichen Effekt von dir entfernt", "hat deinem Feind den Rest gegeben" },
+        many = { "haben dich geheilt", "haben dich mit einem Schild geschützt", "haben einen schädlichen Effekt von dir entfernt", "haben deinem Feind den Rest gegeben" },
+        saw = "hat dich sterben sehen", watched = "hat dir beim Sterben zugesehen", tried = "hat versucht, dich zu retten", foe = "gab Hogger den Rest",
+    },
+    frFR = {
+        heal = { { "Mira t’a soigné pendant le combat", "Mira t’a soigné pendant le combat à Mulgore" },
+            { "Mira a soigné Aila pendant le combat", "Mira a soigné Aila pendant le combat à Mulgore" } },
+        deeds = { "t’a soigné", "t’a protégé avec un bouclier", "a dissipé un effet néfaste sur toi", "a achevé ton adversaire" },
+        many = { "t’ont soigné", "t’ont protégé avec un bouclier", "ont dissipé un effet néfaste sur toi", "ont achevé ton adversaire" },
+        saw = "t’a vu mourir", watched = "t’a regardé mourir", tried = "a essayé de te sauver", foe = "a achevé Hogger",
+    },
+    esES = {
+        heal = { { "Mira te curó durante el combate", "Mira te curó durante el combate en Mulgore" },
+            { "Mira curó a Aila durante el combate", "Mira curó a Aila durante el combate en Mulgore" } },
+        deeds = { "te curó", "te protegió con un escudo", "eliminó un efecto dañino de ti", "remató a tu adversario" },
+        many = { "te curaron", "te protegieron con un escudo", "eliminaron un efecto dañino de ti", "remataron a tu adversario" },
+        saw = "te vio morir", watched = "te miró morir", tried = "intentó salvarte", foe = "remató a Hogger",
+    },
+    itIT = {
+        heal = { { "Mira ti ha curato durante il combattimento", "Mira ti ha curato durante il combattimento in Mulgore" },
+            { "Mira ha curato Aila durante il combattimento", "Mira ha curato Aila durante il combattimento in Mulgore" } },
+        deeds = { "ti ha curato", "ti ha protetto con uno scudo", "ha rimosso un effetto dannoso da te", "ha finito il tuo avversario" },
+        many = { "ti hanno curato", "ti hanno protetto con uno scudo", "hanno rimosso un effetto dannoso da te", "hanno finito il tuo avversario" },
+        saw = "ti ha visto morire", watched = "ti ha guardato morire", tried = "ha cercato di salvarti", foe = "ha finito Hogger",
+    },
+    plPL = {
+        heal = { { "Mira leczyła cię podczas walki", "Mira leczyła cię podczas walki w Mulgore" },
+            { "Mira leczyła Aila podczas walki", "Mira leczyła Aila podczas walki w Mulgore" } },
+        deeds = { "leczyła cię", "osłoniła cię tarczą", "usunęła z ciebie szkodliwy efekt", "dobiła twojego przeciwnika" },
+        many = { "leczyli cię", "osłonili cię tarczą", "usunęli z ciebie szkodliwy efekt", "dobili twojego przeciwnika" },
+        saw = "widziała, jak giniesz", watched = "przyglądała się, jak giniesz", tried = "próbowała cię uratować", foe = "dobiła przeciwnika Hogger",
+    },
+    ruRU = {
+        heal = { { "Mira лечила тебя во время боя", "Mira лечила тебя во время боя в зоне «Mulgore»" },
+            { "Mira лечила Aila во время боя", "Mira лечила Aila во время боя в зоне «Mulgore»" } },
+        deeds = { "лечила тебя", "защитила тебя щитом", "сняла с тебя вредоносный эффект", "добила 1 недруга" },
+        many = { "лечили тебя", "защитили тебя щитом", "сняли с тебя вредоносный эффект", "добили 1 недруга" },
+        saw = "видела, как ты умираешь", watched = "смотрела, как ты умираешь", tried = "пыталась спасти тебя", foe = "добила недруга Hogger",
+    },
+    zhCN = {
+        heal = { { "Mira在战斗中治疗了你", "Mira在Mulgore的战斗中治疗了你" },
+            { "Mira在战斗中治疗了Aila", "Mira在Mulgore的战斗中治疗了Aila" } },
+        deeds = { "治疗了你", "为你施加了护盾", "驱散了你身上的有害效果", "击杀了1个敌人" },
+        many = { "治疗了你", "为你施加了护盾", "驱散了你身上的有害效果", "击杀了1个敌人" },
+        saw = "目睹你死去", watched = "旁观你死去", tried = "试图救你", foe = "击杀了Hogger",
+    },
+}
+
+local MULTI_KILL = {
+    deDE = "hat %d Feinden den Rest gegeben", frFR = "a achevé %d adversaires",
+    esES = "remató a %d adversarios", itIT = "ha finito %d avversari",
+    plPL = "dobiła %d przeciwników", ruRU = "добила %d недругов", zhCN = "击杀了%d个敌人",
+}
+
 for _, id in ipairs({ "deDE", "frFR", "esES", "itIT", "plPL", "ruRU", "zhCN" }) do
     Section(id .. " witness rows, deeds and tooltip")
     mock.Reset()
@@ -142,8 +203,9 @@ for _, id in ipairs({ "deDE", "frFR", "esES", "itIT", "plPL", "ruRU", "zhCN" }) 
         local at = outcome == "survived" and 2 or 1
         local spec = ns.Rows.Get(kind)
         -- The picker uses this field directly, without Fmt or Format.You.
-        Eq(spec.reason, expected.reason[at], kind .. " raw picker reason")
-        Plain(spec.reason, kind .. " raw picker reason")
+        local reason = ns.Rows.Reason({ type = kind })
+        Eq(reason, expected.reason[at], kind .. " raw picker reason")
+        Plain(reason, kind .. " raw picker reason")
         for owner, guid in ipairs({ F.SELF.guid, ALT }) do
             local row = { type = kind, me = guid, time = ns.Now(), zone = "Mulgore",
                 context = { watched = 40, pct = 6, name = "Unrelated creature", npcID = 6 } }
@@ -167,6 +229,76 @@ for _, id in ipairs({ "deDE", "frFR", "esES", "itIT", "plPL", "ruRU", "zhCN" }) 
             for _, line in ipairs(lines) do Plain(line, kind .. " tooltip") end
         end
     end
+
+    Section(id .. " qualified actions, watching and shared recipients")
+    local W, expectedProof = ns.Witnesses, PROVEN[id]
+    for actionIndex, action in ipairs({ "heal", "absorb", "dispel", "kill" }) do
+        local c = { evidence = 1, method = action == "kill" and "party_kill" or "meter", action = action,
+            started = ns.Now() - 20, ended = ns.Now(), name = "Hogger", npcID = 448, rank = "rare" }
+        local w = { type = W.AID, guid = OBSERVER, t = ns.Now(), creature = { name = "Hogger", rank = "rare" } }
+        for key, value in pairs(c) do w[key] = value end
+        Eq(W.Deed(w), expectedProof.deeds[actionIndex], "the verified " .. action .. " deed")
+        Eq(W.Deed(w, "line"), expectedProof.deeds[actionIndex], "the verified " .. action .. " standalone deed")
+        Eq(W.Deed(w, "many"), expectedProof.many[actionIndex], "the verified " .. action .. " group deed")
+        if action == "kill" then Eq(W.Foe(w), expectedProof.foe, "the exact victim clause agrees with the helper") end
+        local _, lines = W.Tip(w, ns.Now())
+        for _, line in ipairs(lines) do Plain(line, action .. " tooltip") end
+        for owner, guid in ipairs({ F.SELF.guid, ALT }) do
+            local row = { type = W.AID, me = guid, time = ns.Now(), zone = "Mulgore", context = c }
+            local reason = ns.Rows.Reason(row)
+            Plain(reason, action .. " raw reason")
+            Check(not reason:find("^they "), action .. " reason fell back to English")
+            for place = 1, 2 do
+                local text = ns.Rows.Get(W.AID).text(row, OBSERVER, place == 1)
+                Plain(text, action .. " shared recipient")
+                if action == "heal" then Eq(text, expectedProof.heal[owner][place], "healing identifies the right recipient") end
+            end
+        end
+    end
+    for _, count in ipairs({ 1, 2, 5, 21 }) do
+        local c = { evidence = 1, method = "party_kill", action = "kill", kills = count,
+            started = ns.Now() - 20, ended = ns.Now(), name = "Hogger", npcID = 448, rank = "rare" }
+        local w = { type = W.AID, guid = OBSERVER, t = ns.Now(), creature = { name = "Hogger", rank = "rare" } }
+        for key, value in pairs(c) do w[key] = value end
+        local expectedDeed = count == 1 and expectedProof.deeds[4]
+            or ((id == "ruRU" and count == 21) and "добила 21 недруга" or MULTI_KILL[id]:format(count))
+        Eq(W.Deed(w), expectedDeed, "killing blows counted correctly at " .. count)
+        Eq(W.Deed(w, "line"), expectedDeed, "the tooltip uses the same kill count")
+        Plain(W.Caption(w), "counted kill caption")
+        local _, lines = W.Tip(w, ns.Now())
+        for _, line in ipairs(lines) do Plain(line, "counted kill tooltip") end
+        if count > 1 then
+            Eq(W.Foe(w), nil, "several kills have no single victim subtitle")
+            Check(W.Caption(w):find(tostring(count), 1, true) ~= nil, "the caption retains the kill count")
+        end
+        for _, guid in ipairs({ F.SELF.guid, ALT }) do
+            local row = { type = W.AID, me = guid, time = ns.Now(), zone = "Mulgore", context = c }
+            local reason = ns.Rows.Reason(row)
+            Plain(reason, "counted kill reason")
+            Check(reason:find(tostring(count), 1, true) ~= nil, "the reason retains the kill count")
+            for place = 1, 2 do
+                local text = ns.Rows.Get(W.AID).text(row, OBSERVER, place == 1)
+                Plain(text, "counted kill timeline")
+                if count > 1 then
+                    Check(text:find(tostring(count), 1, true) ~= nil, "the timeline retains the kill count")
+                    Check(not text:find("Hogger", 1, true), "multiple kills cannot all become the one named foe")
+                end
+            end
+        end
+    end
+    local watch = { type = W.WATCHED, guid = OBSERVER, t = ns.Now(), evidence = 1,
+        method = "target_streak", action = "witness", watched = 0.8 }
+    Eq(W.Deed(watch), expectedProof.saw, "a corroborated glimpse keeps the original words")
+    watch.watched = 30
+    local deed, underline = W.Deed(watch)
+    Eq(deed, expectedProof.watched, "a long corroborated watch has no moral escalation")
+    Eq(underline, nil, "no translated accusation to underline")
+    local _, watchLines = W.Tip(watch, ns.Now())
+    for _, line in ipairs(watchLines) do Plain(line, "qualified watch tooltip") end
+    local help = { type = W.HELPED, guid = OBSERVER, evidence = 1, method = "meter", action = "heal" }
+    Eq(W.Deed(help), expectedProof.tried, "the failed intervention keeps the original words")
+    help.evidence = 2
+    Eq(W.Deed(help), expected.deed[1], "unknown proof versions do not strengthen legacy words")
 end
 
 _G.GetLocale = wasLocale

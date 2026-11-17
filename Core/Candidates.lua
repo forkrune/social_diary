@@ -138,7 +138,7 @@ local function GatherBuffer(add, now)
     local recent = ns.Interactions.Since(now - RECENT_WINDOW)
     for i = 1, #recent do
         local kind = recent[i].type
-        add(recent[i].guid, ns.Rows.Get(kind).reason or RECENT[kind] or ns.Fmt(L["recent %s"], kind))
+        add(recent[i].guid, ns.Rows.Reason(recent[i].row) or RECENT[kind] or ns.Fmt(L["recent %s"], kind))
     end
 end
 

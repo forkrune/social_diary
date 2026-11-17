@@ -70,8 +70,9 @@ function Interactions.Totals()
 end
 
 -- Everyone whose latest row is at or after `since`, newest first:
--- { guid, time, type } of that row. DIA-3's picker offers them as "someone
--- I just dealt with".
+-- { guid, time, type, row } of that row. The original row is read-only to
+-- callers and lets its kind explain the encounter from its own context.
+-- DIA-3's picker offers them as "someone I just dealt with".
 function Interactions.Since(since)
     local list = {}
     for guid, rows in pairs(ns.db.interactions) do
@@ -79,7 +80,7 @@ function Interactions.Since(since)
             local row = rows[i]
             if not Observed(row.type) then
                 if row.time >= since then
-                    list[#list + 1] = { guid = guid, time = row.time, type = row.type }
+                    list[#list + 1] = { guid = guid, time = row.time, type = row.type, row = row }
                 end
                 break
             end

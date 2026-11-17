@@ -1,5 +1,5 @@
--- The witness card (Your Diary's plates): someone observed around a death
--- or a survived fight (Capture.lua), as
+-- The witness card (Your Diary's plates): someone who saw a death or gave
+-- attributable help in a fight (Capture.lua), as
 -- .claude/ui-proposal/witness-card-proposal.md. It takes the killer card's
 -- place in the margin (or the close call's, for a rescue: the user's call,
 -- 14 Oct, a person in the moment is the better story than the creature):
@@ -14,14 +14,14 @@
 --                alone (the tooltip still says who else was there). It never
 --                takes a line of its own (14 Oct, the user, after level 14's
 --                M card read on four lines)
---   the deed     the bounded observation, in the hand (Text.lua's Deed).
---                A witness the player writes in may retain their own
---                interpretation: "saw you die", "tried to save you",
---                "saved you". Automatic targeting never supplies intent.
---   the foe      an authored witness's creature, in small print
+--   the deed     the qualifying observation, in the hand (Text.lua's Deed).
+--                A continuous watch, a failed intervention, or the actual
+--                help given. Old unqualified rows keep their bounded words.
+--                A written account retains the player's own interpretation.
+--   the foe      an authored witness's creature or an attributed kill, in small print
 --                (Text.lua's Foe): "to a Ragged Young Wolf", "from Hogger".
---                Automatic witness rows do not establish a killer or the
---                creature the other player fought. Secondary: the
+--                A killed threat is never treated as the user's killer.
+--                Secondary: the
 --                first thing given up where the margin is short, and then
 --                the caption names the creature, as it does a killer whose
 --                card is left off
@@ -31,7 +31,7 @@
 --                close call begins), the figure large in rubric, "6%": how
 --                near it was, as the player wrote it
 --
--- An authored watcher's card was laid on a page you bled on (BLOOD): dried blood,
+-- A watcher's card was laid on a page you bled on (BLOOD): dried blood,
 -- splashed across the slip's corner and off its edge onto the page, a pool,
 -- a run or two over the edge and droplets flung past it, built as the heat
 -- map's ink blots are (UI/Ink/Blot.lua: drops that run together, a darker
@@ -39,8 +39,8 @@
 -- the lines nearest its corner, never under the name or the rest of a line,
 -- and under a word it is the wash alone, lighter (BLOOD.soft, .under): the
 -- words keep their contrast. A written "saw" keeps the small stain. An
--- automatic observation gets no blood or underline: a target's sampled
--- duration cannot establish attention, neglect or blame.
+-- unqualified old observation gets no blood; no automatic watch gets the
+-- old moral underline or the largest stain.
 --
 -- The family's rule holds: the hand is what happened, small print what it
 -- was against. The name is in ink like everyone else's on the plates (no
@@ -184,8 +184,9 @@ function WitnessCard.Evidence(w)
     return nil
 end
 
--- An authored "saw" has the small stain. Look returns nil for automatic
--- observations, so legacy timing never becomes a visual accusation.
+-- A written glimpse or a corroborated watch carries the death's stain.
+-- Unqualified legacy timing never becomes a visual accusation, and no
+-- automatic watch asks for the old merciless decoration.
 function WitnessCard.Blood(w)
     local look = Witnesses.Look(w)
     return look and BLOOD.amount[look] or nil
@@ -823,8 +824,8 @@ WitnessCard.WITNESS, WitnessCard.FORMS, WitnessCard.BLOOD = WITNESS, FORMS, BLOO
 -- observed around a death or in a survived fight on this plate. A witness
 -- goes before the killer card (or the matching close call's): a person
 -- in the moment is the better story than the creature (14 Oct, the user's call).
--- The historical candidate order stays: "helped" before "watched", then
--- the longer targeting streak, then the latest. It proves no action or intent.
+-- Qualified observations come before old unqualified candidates; within
+-- those, help before watching, the longer watch, then the latest.
 -- `crosses` as Deaths' pass left them (cross.deaths), `marks`
 -- plate.closeMarks, `index` Journey.WitnessIndex's, `onPage(x, y)` a card
 -- spot to the page.
@@ -836,7 +837,13 @@ WitnessCard.WITNESS, WitnessCard.FORMS, WitnessCard.BLOOD = WITNESS, FORMS, BLOO
 -- call (the close call's), others (how many more witnessed the same
 -- moment), mark (where its cross is on the page) }.
 local DEATH_WITNESS = { [Witnesses.HELPED] = true, [Witnesses.WATCHED] = true }
-local CLOSE_WITNESS = { [Witnesses.SAVED] = true }
+local CLOSE_WITNESS = { [Witnesses.SAVED] = true, [Witnesses.AID] = true }
+
+-- Evidence belongs to the observation, copied without inventing missing
+-- values. The chosen card reads the same role as its People row. The old
+-- pct remains available for compatibility but Evidence never charts it.
+local PROOF_FIELDS = { "evidence", "method", "action", "started", "ended", "meterSession", "amount",
+    "healed", "absorbed", "dispelled", "kills" }
 
 function WitnessCard.Choose(crosses, marks, index, onPage)
     local Get = ns.Rows.Get
@@ -848,8 +855,11 @@ function WitnessCard.Choose(crosses, marks, index, onPage)
         local c = w.row.context or {}
         local better = not best
         if best then
+            local proved, previous = Witnesses.Proven(c), Witnesses.Proven(best)
             local bh = best.kind == "helped"
-            if helped ~= bh then
+            if proved ~= previous then
+                better = proved
+            elseif helped ~= bh then
                 better = helped
             elseif (c.watched or 0) ~= (best.watched or 0) then
                 better = (c.watched or 0) > (best.watched or 0)
@@ -858,9 +868,17 @@ function WitnessCard.Choose(crosses, marks, index, onPage)
             end
         end
         if not better then return end
+        local role, others, named = Witnesses.Role(w.row.type, c), 0, { [w.guid] = true }
+        for i = 2, #found do
+            local other = found[i]
+            if role ~= "kill" and not named[other.guid] and Witnesses.Role(other.row.type, other.row.context) == role then
+                named[other.guid], others = true, others + 1
+            end
+        end
         best = { kind = Get(w.row.type).witness, type = w.row.type, guid = w.guid, row = w.row, t = w.t,
-            watched = c.watched, pct = c.pct, others = #found - 1,
+            watched = c.watched, pct = c.pct, others = others,
             creature = type(c.name) == "string" and { npcID = c.npcID, name = c.name, rank = c.rank } or nil }
+        for _, key in ipairs(PROOF_FIELDS) do best[key] = c[key] end
         for key, value in pairs(extra) do best[key] = value end
     end
     for _, cross in ipairs(crosses or {}) do
@@ -905,9 +923,9 @@ ns.UI.JourneyPlate.RegisterPass("witness", {
 -- (the user's call, 14 Oct: a witness before the killer): order 30, before the killer's (40)
 -- and the close call's (50); the pass above clears the one they replace,
 -- plate.killer for a death's witness, plate.foe for a survived fight's.
--- Their name opens their page, as a person's strip does. Automatic cards
--- name no creature, so a known death's own killer goes to the caption
--- (`said.death`). Left off, the witness is also told in a sentence of
+-- Their name opens their page, as a person's strip does. An automatic
+-- card may name a threat the helper killed; the death's own confirmed
+-- killer goes separately to the caption (`said.death`). Left off, the witness is also told in a sentence of
 -- their own (`said.witness`, Text.lua's caption). Close-call suppression
 -- stays as before (`said.close`); removing it here would expose the
 -- separate close-call text's unverified health claim.
@@ -947,7 +965,10 @@ do
             local it = shown[1]
             -- Whether the card as laid kept its creature's line.
             local named = it ~= nil and it.note ~= nil and it.note.plan ~= nil and it.note.plan.foe ~= nil
-            if seen.death and not named then said.death = ns.UI.JourneyText.KillerName(WitnessKiller(seen)) end
+            -- An attributed kill named on this card is a threat they
+            -- removed, not necessarily the creature that killed the user.
+            -- The confirmed death keeps its own cause in the caption.
+            if seen.death then said.death = ns.UI.JourneyText.KillerName(WitnessKiller(seen)) end
             if named and seen.call ~= nil then said.close = true end
             if not it then said.witness = seen end
         end,

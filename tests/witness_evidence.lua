@@ -1,6 +1,6 @@
--- A target snapshot and a combat flag are observations, not another
--- player's intention. Exercise the capture-to-reading path, old row
--- shapes, and the boundary between automatic and player-written words.
+-- Unrelated snapshots no longer create a story. Old rows cannot acquire
+-- stronger evidence retroactively, and explicit player interpretations
+-- remain the player's words. New action detections live in witness_detection.
 
 local T = ...
 local mock, F = T.mock, T.F
@@ -56,7 +56,7 @@ local function Automatic(row, guid)
     local _, tip = W.Tip(w, mock.now)
     local deed, underline = W.Deed(w)
     local all = table.concat({ timeline, deed, W.Deed(w, "many"), W.Deed(w, "line"),
-        W.Caption(w), table.concat(tip, "|"), ns.Rows.Get(row.type).reason }, "|")
+        W.Caption(w), table.concat(tip, "|"), ns.Rows.Reason(row) }, "|")
     for _, unsupported in ipairs({ "merciless", "save", "rescu", "tried", "watched", "saw you",
         "joined", "refused", "help", "health", "%" }) do
         Check(not all:lower():find(unsupported, 1, true), "automatic wording claimed " .. unsupported .. ": " .. all)
@@ -100,16 +100,14 @@ for _, survived in ipairs({ false, true }) do
     if survived then
         mock.inCombat = false
         mock.fire("PLAYER_REGEN_ENABLED")
-        W.Survived(started, mock.now, 94, 100, { npcID = 2955, name = "Plainstrider" })
+        ns.Fire("SD_FIGHT_SURVIVED", started, mock.now, 94, 100, { npcID = 2955, name = "Plainstrider" })
     else
         mock.fire("PLAYER_DEAD")
     end
-    local kind = survived and W.SAVED or W.HELPED
-    local row = ns._test.LatestInteraction(STRANGER.guid, kind)
-    Check(row ~= nil, "the existing captured row is retained")
-    local _, line = Automatic(row, STRANGER.guid)
-    Eq(line, survived and "Bram was seen during a fight you survived in Mulgore"
-        or "Bram was seen around the time you died in Mulgore", "the complete timeline sentence stays factual")
+    for _, kind in ipairs({ W.WATCHED, W.HELPED, W.SAVED, W.AID }) do
+        Eq(ns._test.LatestInteraction(STRANGER.guid, kind), nil,
+            "unrelated targeting and combat produced " .. kind)
+    end
 end
 
 --------------------------------------------------------------------------
@@ -121,15 +119,9 @@ Fresh()
 mock.SetUnit("target", STRANGER)
 mock.SetUnit("targettarget", SELF)
 Eq(T.Rows(STRANGER.guid, W.WATCHED), 0, "no earlier witness observation exists")
-local died = mock.now
 mock.fire("PLAYER_DEAD")
-local first = ns._test.LatestInteraction(STRANGER.guid, W.WATCHED)
-Check(first ~= nil, "the death handler retains its first targeting sample")
-Eq(first.time, died, "the row is recorded at the death")
-Eq(first.context.watched, 0, "there is no earlier sampled targeting duration")
-local _, firstLine = Automatic(first, STRANGER.guid)
-Eq(firstLine, "Bram was seen around the time you died in Mulgore",
-    "approximate chronology includes observations first made at death")
+Eq(ns._test.LatestInteraction(STRANGER.guid, W.WATCHED), nil,
+    "the first observation at death must not invent earlier witnessing")
 
 --------------------------------------------------------------------------
 Section("old witness rows remain neutral without rewriting saved facts")
@@ -193,3 +185,37 @@ for _, case in ipairs({ { deed = "saw", words = "saw you die" },
     Eq(rec.pct, 6, "reading never changes the authored health")
 end
 Eq(#ns.Journey.WitnessIndex(), before, "authored interpretations never become captured People rows")
+
+--------------------------------------------------------------------------
+Section("routine group assistance stays in the expanded episode")
+
+Fresh()
+local start, sid = mock.now - 120, 991
+ns.Characters.Observe(STRANGER.guid, { first = "Bram", surname = "Redfen" })
+ns.Diary.Add(STRANGER.guid, { source = "test" })
+ns.db.sessions[sid] = { id = sid, me = SELF.guid, source = "group", startedAt = start,
+    endedAt = mock.now, zones = { "Mulgore" }, deaths = {}, others = 0,
+    participants = { [STRANGER.guid] = { since = start, last = mock.now, seconds = 120,
+        zones = { "Mulgore" } } } }
+for i = 1, 3 do
+    local at = start + i * 20
+    ns.Interactions.Add(STRANGER.guid, W.AID, { time = at, session = sid,
+        context = { evidence = 1, method = "meter", action = "heal", healed = 20,
+            started = at - 10, ended = at, grouped = true } })
+end
+ns.Interactions.Add(STRANGER.guid, W.HELPED, { time = mock.now, session = sid,
+    context = { evidence = 1, method = "meter", action = "heal", healed = 20,
+        started = mock.now - 10, ended = mock.now, grouped = true } })
+ns.Touch()
+local episode
+for _, item in ipairs(ns.Timeline.For(STRANGER.guid)) do
+    if item.kind == "session" and item.session.id == sid then episode = item end
+end
+Check(episode ~= nil, "the existing group episode remains the home for the assistance")
+Eq(#episode.all, 4, "expanded history retains every recorded encounter")
+Eq(#episode.lines, 1, "routine successful help does not crowd the folded episode")
+Eq(episode.lines[1].row.type, W.HELPED, "the fatal attempt remains a visible moment")
+local _, help = ns.UI.DescribeItem(episode.all[1], STRANGER.guid)
+Check(help:find("healed you during the fight", 1, true), "expanding reveals the exact action")
+Eq(ns.Rows.Get(W.AID).moment({ context = { evidence = 1, method = "meter", action = "heal" } }), true,
+    "an encounter with someone outside the group remains a visible moment")

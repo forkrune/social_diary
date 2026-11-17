@@ -1,8 +1,8 @@
 -- The witness card (Features/Witnesses/Card.lua): someone who was there
 -- when you died or nearly did, in the plate's margin, in the place of the
 -- card they go before (the killer's, or a survived fight's close
--- call's). Automatic observations use neutral words and no health chart,
--- blood or judgemental underline. The player's own interpretation keeps
+-- call's). Qualified observations keep their specific deeds, while legacy
+-- rows keep bounded words. Automatic aid has no health chart or judgemental underline. The player's own interpretation keeps
 -- its deed, creature and supplied health. "Ilsabet & two others" stays on
 -- the name's one line or the name alone, and an authored watcher's card
 -- keeps its small stain across its corner
@@ -210,7 +210,7 @@ Eq(card.name:GetText(), "Grisha", "the card's name")
 Eq(card.guid, GRISHA, "the name opens nobody's page")
 
 --------------------------------------------------------------------------
-Section("the card: only an authored witness has blood")
+Section("the card: authored blood and legacy restraint")
 
 local function Shown()
     local n = 0
@@ -340,6 +340,106 @@ ns.SetSetting("flatSheets", false)
 card:Hide()
 
 --------------------------------------------------------------------------
+Section("qualified observations retain the story and its evidence")
+
+local function Proven(w, action)
+    w.evidence, w.action = 1, action
+    w.method = action == "witness" and "target_streak" or (action == "kill" and "party_kill" or "meter")
+    w.started, w.ended = w.t - 30, w.t
+    return w
+end
+
+for _, seconds in ipairs({ 0.8, 1.5, 6.4, 30 }) do
+    local w = Proven(Watcher(seconds), "witness")
+    Eq(W.Deed(w), seconds < 1.5 and "saw you die" or "watched you die", "qualified watch keeps its original deed")
+    Lay(w, 176)
+    Check(card.blood and card.blood.drawn > 0, "a qualified death witness keeps the existing stain")
+    Eq(card.underlined, nil, "a long watch cannot establish mercilessness")
+    Eq(card.plan.row, nil, "a death witness has no health chart")
+    Eq(card:Foe(), "", "the watcher's target is not a killer")
+    local _, proofLines = W.Tip(w, now)
+    Check(Any(proofLines, "Had you or a foe targeted for"), "the tooltip states the actual observation")
+end
+
+local tried = Proven(Helper(W.HELPED), "heal")
+tried.healed = 80
+Eq(W.Deed(tried), "tried to save you", "attributed aid in a fatal fight keeps the original story")
+Eq(W.Caption(tried), "Grisha tried to save you.", "the caption agrees with the card")
+Eq(W.Foe(tried), nil, "a healer's unrelated creature context is not a foe")
+
+local deeds = { heal = "healed you", absorb = "shielded you", dispel = "removed a harmful effect from you",
+    kill = "finished off your foe" }
+for _, action in ipairs({ "heal", "absorb", "dispel", "kill" }) do
+    local w = Proven(Helper(W.AID), action)
+    w.death, w.call, w.pct = nil, { t = w.t }, 6
+    Eq(W.Deed(w), deeds[action], "the survived contribution is told specifically")
+    Lay(w, 176)
+    Eq(card:Deed(), deeds[action], "the drawn deed agrees")
+    Eq(card.plan.row, nil, "aid never charts legacy pct")
+    Check(not card.barFill:IsShown() and not card.figure:IsShown(), "pooled authored health is hidden")
+    Eq(card.underlined, nil, "aid adds no judgement")
+    if action == "kill" then Eq(card:Foe(), "finished off Hogger", "the exact attributed threat has its own clause") end
+end
+
+local combined = Proven(Helper(W.AID), "heal")
+combined.healed, combined.absorbed, combined.dispelled, combined.kills = 80, 20, 1, 1
+local _, contributions = W.Tip(combined, now)
+for _, fact in ipairs({ "Healed you", "Shielded you", "Removed a harmful effect from you", "Finished off Hogger" }) do
+    Check(Any(contributions, fact), "the tooltip preserves " .. fact)
+end
+Eq(W.Deed(combined), "healed you", "the short deed chooses one contribution without summing unlike amounts")
+
+-- A threat killed by the helper can differ from the creature that later
+-- killed the owner. Both facts survive when the card has its small print.
+local killed = Proven(Helper(W.HELPED), "kill")
+killed.kills, killed.death.name = 1, "Ragged Young Wolf"
+Lay(killed, 176)
+local said = {}
+ns.UI.JourneyMargin.KINDS.witness.say(said, { { note = card } }, { witness = killed })
+Eq(said.death, "a Ragged Young Wolf", "the confirmed death cause is not replaced by the helper's victim")
+
+-- The plate copies the proof and counts only people who support its deed.
+local at = now - 600
+local index = {}
+for i, action in ipairs({ "heal", "heal", "absorb" }) do
+    local c = Proven({ t = at, healed = action == "heal" and 80 or nil }, action)
+    index[i] = { guid = "Player-0000-0000000" .. i, t = at, row = { type = W.AID, context = c } }
+end
+local marks = { { list = { { call = { t = at } } }, at = { 100, 100 } } }
+local chosen = Card.Choose({}, marks, index, function(x, y) return x, y end)
+Eq(chosen.action, "heal", "the action survives the card adapter")
+Eq(chosen.healed, 80, "the contribution survives the card adapter")
+Eq(chosen.others, 1, "a different contributor is not called a second healer")
+index[#index + 1] = index[2]
+local repeated = Card.Choose({}, marks, index, function(x, y) return x, y end)
+Eq(repeated.others, 1, "two rows from one person are not counted as two people")
+for _, entry in ipairs(index) do
+    entry.row.context.action, entry.row.context.method, entry.row.context.kills = "kill", "party_kill", 1
+end
+local differentKills = Card.Choose({}, marks, index, function(x, y) return x, y end)
+Eq(differentKills.others, 0, "different killing blows are not one shared killing blow")
+local several = Proven(Helper(W.AID), "kill")
+several.kills = 2
+Eq(W.Deed(several), "finished off 2 foes", "several threats are told as several")
+Eq(W.Foe(several), nil, "no single victim subtitle for several kills")
+local row = { type = W.AID, context = several, me = SELF.guid }
+Eq(ns.Rows.Get(W.AID).text(row, GRISHA, true), "Grisha finished off 2 foes that had been attacking you",
+    "the timeline does not assign every kill to one named threat")
+for _, width in ipairs({ 142, 176 }) do
+    Lay(several, width)
+    Check(not card.overfull, "the counted kill fits an ordinary margin")
+    Eq(card:Deed(), "finished off 2 foes", "the card retains the multiple kills")
+    local dispel = Proven(Helper(W.AID), "dispel")
+    Lay(dispel, width)
+    Check(not card.overfull, "the longer dispel deed fits an ordinary margin")
+    Eq(card:Deed(), "removed a harmful effect from you", "the dispel deed stays whole")
+end
+index[1].row.context.ended = at + 1
+Eq(#W.At({ index[1] }, at, { [W.AID] = true }), 0, "a different encounter endpoint cannot attach to the close call")
+Check(ns.Rows.Get(W.AID).moment({ context = {} }), "an ungrouped intervention can stand alone")
+Check(not ns.Rows.Get(W.AID).moment({ context = { grouped = true } }), "ordinary group support stays inside its exchange")
+
+--------------------------------------------------------------------------
 Section("/sd testdata: the witnesses on the plates")
 
 ns.TestData.Write()
@@ -396,8 +496,8 @@ table.sort(seen)
 -- oasis has a week's page, or level 16's, to itself, XL; it shared one
 -- with the print before it, M, until the pages went by sitting. Brakk's
 -- crag shares its sitting's page with the Barrens plate before it, M.)
-Eq(table.concat(seen, ", "), "10:Wenna:was seen around the time you died:M, 11:Numa:was seen during the fight:L, 13:Corvin:was seen around the time you died:L, "
-    .. "14:Ilsabet & two others:were seen around the time you died:M, week:Brakk:was seen around the time you died:M, week:Grisha:was seen around the time you died:XL",
+Eq(table.concat(seen, ", "), "10:Wenna:tried to save you:M, 11:Numa:shielded you:L, 13:Corvin:watched you die:L, "
+    .. "14:Ilsabet & two others:saw you die:M, week:Brakk:tried to save you:M, week:Grisha:watched you die:XL",
     "the made-up witnesses' cards")
 -- In the margin where the killer's card would be: after the people and
 -- the finds, ahead of the close call's card and the luck. (The small note
@@ -455,7 +555,7 @@ ns.UI.RedrawJourneyPage()
 Eq(#Witnesses(), 0, "a card with no room is drawn")
 words = table.concat(Captions(), " | ")
 Check(words:find("a death, to a Kolkar Pack Runner") ~= nil, "the creature is not in the words: " .. words)
-Check(words:find("Corvin was seen around the time you died.", 1, true) ~= nil, "the witness is not in the words: " .. words)
+Check(words:find("Corvin watched you die.", 1, true) ~= nil, "the witness is not in the words: " .. words)
 Eq(page.witnessesWritten, 0, "a card left off was counted")
 for name, form in pairs(Card.FORMS) do form.least = least[name] end
 

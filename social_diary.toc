@@ -459,6 +459,9 @@ Features/Hunts/Capture.lua
 # same units as Capture/Nearby.lua's reunion toast and must still run after
 # it, as on every event it shares with Capture/
 # (Features/Witnesses/Capture.lua's header).
+# The meter reader loads before its capture client; both stay after the
+# earlier capture handlers so observed names cannot alter a reunion toast.
+Features/Witnesses/Meter.lua
 Features/Witnesses/Capture.lua
 
 #@do-not-package@

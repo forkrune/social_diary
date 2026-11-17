@@ -12,8 +12,8 @@ local addonName, ns = ...
 
 local Witnesses = ns.Witnesses
 local Text = ns.UI.JourneyText
-local Capital, Health, NUMBER, Short, When, Who =
-    Text.Capital, Text.Health, Text.NUMBER, Text.Short, Text.When, Text.Who
+local Capital, Glue, Health, NUMBER, Short, When, Who =
+    Text.Capital, Text.Glue, Text.Health, Text.NUMBER, Text.Short, Text.When, Text.Who
 local L, Fmt = ns.L, ns.Fmt
 
 -- Their first name, "Someone" where the buffer no longer has it. A witness the
@@ -34,18 +34,20 @@ function Witnesses.Others(n, prose)
     return ns.Plural(n, L["& another|& %s others##plural"], word)
 end
 
--- Only a witness the player wrote in says they saw the death. A sampled
--- target, however long it stayed selected, does not say where the other
--- player's attention was. Old automatic rows keep their fields, but no
--- longer turn their duration into a judgement or more blood on the card.
+-- The capture's corroborated, unbroken watch may say saw or watched.
+-- Neither a long interval nor an old unqualified row becomes a judgement
+-- of the person. Written witnesses retain the player's plain "saw".
 function Witnesses.Look(w)
-    return w and w.written and w.type == Witnesses.WATCHED and "saw" or nil
+    if not w or w.type ~= Witnesses.WATCHED then return nil end
+    if w.written then return "saw" end
+    local role = Witnesses.Role(w.type, w)
+    return (role == "saw" or role == "watched") and role or nil
 end
 
--- Automatic rows describe when someone was seen. Targeting a creature
--- and being in combat at separate moments cannot establish that they
--- joined the user's fight, let alone tried to help or saved them. The
--- player's own written interpretation keeps its existing words.
+-- Qualified observations keep the original watch or failed-intervention
+-- words; successful help says the action actually attributed. A targeting
+-- snapshot without that proof retains its historical bounded description.
+-- The player's own interpretation keeps its existing words.
 --
 -- `form` is how the sentence takes it, where English says the same words
 -- and another language does not:
@@ -53,8 +55,14 @@ end
 --   "many"   after several, the verb theirs: "Numa and another saved you"
 --   "line"   a line of its own with no one named before it: "Saved you"
 local DEEDS_SAID = {
-    many = { saw = L["saw you die##many"], saved = L["saved you##many"], tried = L["tried to save you##many"] },
-    line = { saw = L["saw you die##line"], saved = L["saved you##line"], tried = L["tried to save you##line"] },
+    one = { saw = L["saw you die"], watched = L["watched you die"], saved = L["saved you"], tried = L["tried to save you"],
+        heal = L["healed you"], absorb = L["shielded you"], dispel = L["removed a harmful effect from you"] },
+    many = { saw = L["saw you die##many"], watched = L["watched you die##many"], saved = L["saved you##many"],
+        tried = L["tried to save you##many"], heal = L["healed you##many"], absorb = L["shielded you##many"],
+        dispel = L["removed a harmful effect from you##many"] },
+    line = { saw = L["saw you die##line"], watched = L["watched you die##line"], saved = L["saved you##line"],
+        tried = L["tried to save you##line"], heal = L["healed you##line"], absorb = L["shielded you##line"],
+        dispel = L["removed a harmful effect from you##line"] },
 }
 local SEEN_SAID = {
     one = { died = L["was seen around the time you died"], survived = L["was seen during the fight"] },
@@ -68,28 +76,40 @@ local function Theirs(w, text, under)
     local record = w and w.guid and ns.Characters.Get and ns.Characters.Get(w.guid)
     return ns.Locale.They(text, record and record.sex or nil), under
 end
-function Witnesses.Deed(w, form)
-    if not (w and w.written) then
-        local said = SEEN_SAID[form] or SEEN_SAID.one
-        return Theirs(w, said[w and w.type == Witnesses.SAVED and "survived" or "died"])
-    end
-    local look = Witnesses.Look(w)
-    local said = form and DEEDS_SAID[form]
-    if said then
-        return Theirs(w, said[look or (w and w.type == Witnesses.SAVED and "saved" or "tried")])
-    end
-    if look == "saw" then return Theirs(w, L["saw you die"]) end
-    if w and w.type == Witnesses.SAVED then return Theirs(w, L["saved you"]) end
-    return Theirs(w, L["tried to save you"])
+
+local function KillDeed(w, form)
+    local words = form == "many" and L["finished off your foe|finished off %d foes##many##plural"]
+        or (form == "line" and L["finished off your foe|finished off %d foes##line##plural"]
+            or L["finished off your foe|finished off %d foes##plural"])
+    return ns.Plural(w.kills or 1, (Theirs(w, words)))
 end
 
--- Only a written interpretation connects this person to the named
--- creature. An automatic row's creature is the user's foe and may not be
--- the one the other player targeted, so no such line is drawn for it.
+function Witnesses.Deed(w, form)
+    local role = Witnesses.Role(w and w.type, w)
+    if w and w.written then
+        role = w.type == Witnesses.WATCHED and "saw" or (w.type == Witnesses.SAVED and "saved" or "tried")
+    end
+    if role == "kill" then return KillDeed(w, form) end
+    local said = DEEDS_SAID[form] or DEEDS_SAID.one
+    if said[role] then return Theirs(w, said[role]) end
+    said = SEEN_SAID[form] or SEEN_SAID.one
+    return Theirs(w, said[role])
+end
+
+-- A written interpretation may connect the person to a creature. The one
+-- automatic creature clause is an attributed killing blow on that exact
+-- threat; it never connects the threat to the user's cause of death.
 function Witnesses.Foe(w)
-    if not (w and w.written) then return nil end
     local name = w and w.creature and Text.KillerName(w.creature)
     if not name then return nil end
+    if not w.written then
+        -- This is the exact threat killed, not the killer inferred from a
+        -- target. A separate clause keeps that distinction on a fatal aid.
+        if Witnesses.Proven(w) and (w.kills or 1) == 1 and ((w.kills or 0) > 0 or w.action == "kill") then
+            return Fmt(Theirs(w, L["finished off %s"]), name)
+        end
+        return nil
+    end
     return Fmt(w.type == Witnesses.WATCHED and L["to %s##witness"] or L["from %s##witness"], name)
 end
 
@@ -103,10 +123,10 @@ function Witnesses.Caption(w)
     return Fmt(L["%1$s %2$s."], who, (Witnesses.Deed(w, others and "many" or nil)))
 end
 
--- The card's tooltip: their full name, who they are, the targeting
--- observation, and when. An automatic row does not measure attention,
--- establish participation or attribute survival. One the player wrote
--- in keeps their interpretation, distinct from that observation. Its
+-- The card's tooltip: their full name, who they are, the qualifying
+-- observation or actions, and when. Old targeting snapshots do not gain
+-- proof merely by being read. One the player wrote in keeps their
+-- interpretation, distinct from the automatic observation. Its
 -- mark's tooltip is this too, where the card may have found no room, so the deed
 -- and the creature are spelt out.
 -- What a written witness did, with its creature: "Saved you from Hogger".
@@ -115,6 +135,20 @@ local function Did(w, form)
     local foe = Witnesses.Foe(w)
     local deed = Witnesses.Deed(w, form)
     return foe and Fmt(L["%1$s %2$s##deed and foe"], deed, foe) or deed
+end
+
+-- What the qualifying observation actually supplied. A tooltip can keep
+-- several contributions even though the short deed chooses one. Counts
+-- and amounts are deliberately not made into a claim about health left.
+local function AidLines(w, lines)
+    if (w.healed or 0) > 0 or w.action == "heal" then lines[#lines + 1] = Theirs(w, L["healed you##line"]) end
+    if (w.absorbed or 0) > 0 or w.action == "absorb" then lines[#lines + 1] = Theirs(w, L["shielded you##line"]) end
+    if (w.dispelled or 0) > 0 or w.action == "dispel" then
+        lines[#lines + 1] = Theirs(w, L["removed a harmful effect from you##line"])
+    end
+    if (w.kills or 0) > 0 or w.action == "kill" then
+        lines[#lines + 1] = Witnesses.Foe(w) or KillDeed(w, "line")
+    end
 end
 
 function Witnesses.Tip(w, now)
@@ -133,10 +167,22 @@ function Witnesses.Tip(w, now)
         who[#who + 1] = ns.UI.Format.ClassName(record)
         if #who > 0 then lines[#lines + 1] = table.concat(who, " ") end
     end
-    lines[#lines + 1] = L["Had you or a foe targeted"]
+    local proved = Witnesses.Proven(w)
+    local first = #lines + 1
+    if Witnesses.Look(w) then
+        lines[#lines + 1] = Fmt(Theirs(w, L["Had you or a foe targeted for %s"]),
+            Glue(Fmt(L["%s seconds"], ns.UI.Format.Decimal(w.watched or 0, 1))))
+        lines[#lines + 1] = L["Not in a fight themselves"]
+    elseif proved then
+        AidLines(w, lines)
+    else
+        lines[#lines + 1] = L["Had you or a foe targeted"]
+    end
+    for i = first, #lines do lines[i] = Capital(lines[i]) end
     local more = w.others or 0
     if more > 0 then
-        lines[#lines + 1] = ns.Plural(more, L["One other was seen too|%s others were seen too##plural"],
+        lines[#lines + 1] = ns.Plural(more, proved and L["One other was there too|%s others were there too##plural"]
+            or L["One other was seen too|%s others were seen too##plural"],
             Capital(NUMBER[more] or tostring(more)))
     end
     local at = w.death or w.call

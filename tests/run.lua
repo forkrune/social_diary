@@ -102,6 +102,8 @@ local FILES = {
     "sounds",
     "witnesses",
     "witness_evidence",
+    "witness_detection",
+    "row_reasons",
     "witness_locale",
     "witness_card",
     "campfire",
