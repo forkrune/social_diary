@@ -68,6 +68,7 @@ G.Genitive = Genitive
 -- shared diary (ns.UI.Format.You). The templates brace the pronoun with its
 -- verb where the verb changes with it ("{Du hast}" -> "Thex hat").
 G.YOU_FOR = {
+    ["du überlebt hast"] = "%s überlebt hat",
     ["du"] = "%s", ["dich"] = "%s", ["dir"] = "%s",
     ["du hast"] = "%s hat", ["du bist"] = "%s ist", ["du warst"] = "%s war", ["du wirst"] = "%s wird",
     ["hast du"] = "hat %s", ["bist du"] = "ist %s", ["warst du"] = "war %s",

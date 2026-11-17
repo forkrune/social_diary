@@ -101,6 +101,8 @@ local FILES = {
     "helpers",
     "sounds",
     "witnesses",
+    "witness_evidence",
+    "witness_locale",
     "witness_card",
     "campfire",
     "campfire_ui",

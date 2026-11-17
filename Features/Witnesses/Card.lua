@@ -1,5 +1,5 @@
--- The witness card (Your Diary's plates): someone who was there when you
--- died or nearly did (Capture.lua), as
+-- The witness card (Your Diary's plates): someone observed around a death
+-- or a survived fight (Capture.lua), as
 -- .claude/ui-proposal/witness-card-proposal.md. It takes the killer card's
 -- place in the margin (or the close call's, for a rescue: the user's call,
 -- 14 Oct, a person in the moment is the better story than the creature):
@@ -14,33 +14,33 @@
 --                alone (the tooltip still says who else was there). It never
 --                takes a line of its own (14 Oct, the user, after level 14's
 --                M card read on four lines)
---   the deed     what they did, in the hand, the timeline's own verbs
---                (Text.lua's Deed): "saw you die", "watched you die",
---                "mercilessly watched you die" (the hand underlines
---                "mercilessly" twice, DOUBLE, as one does when one cannot
---                believe it); "tried to save you", "saved you"
---   the foe      what it was against, in small print (Text.lua's Foe):
---                "to a Ragged Young Wolf", "from Hogger". Secondary: the
+--   the deed     the bounded observation, in the hand (Text.lua's Deed).
+--                A witness the player writes in may retain their own
+--                interpretation: "saw you die", "tried to save you",
+--                "saved you". Automatic targeting never supplies intent.
+--   the foe      an authored witness's creature, in small print
+--                (Text.lua's Foe): "to a Ragged Young Wolf", "from Hogger".
+--                Automatic witness rows do not establish a killer or the
+--                creature the other player fought. Secondary: the
 --                first thing given up where the margin is short, and then
 --                the caption names the creature, as it does a killer whose
 --                card is left off
---   the chart    a rescue's health left only, charted as the close call's
+--   the chart    an authored rescue's supplied health only, charted as the close call's
 --                card charts it (ns.CloseCalls.Card's VITALS: an ink box
 --                filled in rubric, a graphite tick at the tenth where a
 --                close call begins), the figure large in rubric, "6%": how
---                near it was, which is what they saved you from
+--                near it was, as the player wrote it
 --
--- A watcher's card was laid on a page you bled on (BLOOD): dried blood,
+-- An authored watcher's card was laid on a page you bled on (BLOOD): dried blood,
 -- splashed across the slip's corner and off its edge onto the page, a pool,
 -- a run or two over the edge and droplets flung past it, built as the heat
 -- map's ink blots are (UI/Ink/Blot.lua: drops that run together, a darker
 -- rim where it dried), in the card's own turn. It may run under the ends of
 -- the lines nearest its corner, never under the name or the rest of a line,
 -- and under a word it is the wash alone, lighter (BLOOD.soft, .under): the
--- words keep their contrast. The longer they watched, the more of it (a
--- glance a small stain, mercilessly a palm's splash, runs and a spray): the
--- longer you lay there. How long is in the tooltip, never on the card
--- (14 Oct, the user: no seconds count; the strokes went with it).
+-- words keep their contrast. A written "saw" keeps the small stain. An
+-- automatic observation gets no blood or underline: a target's sampled
+-- duration cannot establish attention, neglect or blame.
 --
 -- The family's rule holds: the hand is what happened, small print what it
 -- was against. The name is in ink like everyone else's on the plates (no
@@ -175,14 +175,17 @@ local function Random(key)
     return function(a, b) return a + (b - a) * rand() end, rand
 end
 
--- What a witness's card has to show under its words: "chart" (a rescue's
--- health left), else nil.
+-- Only a player-authored rescue may chart the health they supplied. The
+-- automatic row's legacy pct is a net-damage estimate, not a measurement
+-- of health or evidence that this person saved the player. Keep that saved
+-- field intact; restricting its presentation needs no data migration.
 function WitnessCard.Evidence(w)
-    if w.type == Witnesses.SAVED and type(w.pct) == "number" then return "chart" end
+    if w.written and w.type == Witnesses.SAVED and type(w.pct) == "number" then return "chart" end
     return nil
 end
 
--- How much blood a witness's card has (BLOOD.amount), nil for a helper.
+-- An authored "saw" has the small stain. Look returns nil for automatic
+-- observations, so legacy timing never becomes a visual accusation.
 function WitnessCard.Blood(w)
     local look = Witnesses.Look(w)
     return look and BLOOD.amount[look] or nil
@@ -499,7 +502,7 @@ function WitnessCard.New(parent)
         local nameH = math.max(math.ceil(card.name:GetStringHeight() or 0), 14)
         if nameW > room then fail = true end
         -- The deed, in the hand.
-        local deedText, under = Witnesses.Deed(w)
+        local deedText, under = Witnesses.Deed(w, others and "many" or nil)
         Hand(measure, F.deed)
         local deed = Balanced(measure, deedText, room, F.deedLines)
         if not deed then
@@ -816,19 +819,19 @@ WitnessCard.WITNESS, WitnessCard.FORMS, WitnessCard.BLOOD = WITNESS, FORMS, BLOO
 -- On the plates: the plate's one witness, its pass, its note in the margin
 --------------------------------------------------------------------------
 
--- The plate's one witness (Kind.lua's At), or nil: someone who tried to
--- save the user from a death on this plate, saved them in a close call on
--- it, or watched them die on it. A witness goes before the killer card
--- (or the close call's, for one who saved the user): a person in the
--- moment is the better story than the creature (14 Oct, the user's call).
--- Who acted before who watched, then the longer watcher, then the latest.
+-- The plate's one automatic witness (Kind.lua's At), or nil: someone
+-- observed around a death or in a survived fight on this plate. A witness
+-- goes before the killer card (or the matching close call's): a person
+-- in the moment is the better story than the creature (14 Oct, the user's call).
+-- The historical candidate order stays: "helped" before "watched", then
+-- the longer targeting streak, then the latest. It proves no action or intent.
 -- `crosses` as Deaths' pass left them (cross.deaths), `marks`
 -- plate.closeMarks, `index` Journey.WitnessIndex's, `onPage(x, y)` a card
 -- spot to the page.
 --
 -- { kind ("helped" | "watched": the row kind's `witness`), type (the
 -- row's: "tried_to_help", "saved_you", "watched_death"), guid, row, t,
--- watched (seconds, a watcher's), pct (health left, a rescue's), creature
+-- watched (sampled targeting seconds), pct (legacy aggregate estimate), creature
 -- ({ npcID, name, rank }, nil when not known), death (Deaths' record) or
 -- call (the close call's), others (how many more witnessed the same
 -- moment), mark (where its cross is on the page) }.
@@ -878,9 +881,9 @@ function WitnessCard.Choose(crosses, marks, index, onPage)
     return best
 end
 
--- Someone who was there goes before the creature (ns.UI.JourneyPlate's
--- RegisterPass, after the marks): a witness to a death takes the killer
--- card's place, one who saved the user in a close call the close call's
+-- Someone observed goes before the creature (ns.UI.JourneyPlate's
+-- RegisterPass, after the marks): a death's candidate takes the killer
+-- card's place, a survived fight's candidate the close call's
 -- card's (14 Oct, the user's call). plate.witness is Choose's, from the
 -- crosses as Deaths' pass (`killer`, order 10) left them (their deaths)
 -- and the close calls' marks, so it comes after it and after the close
@@ -897,27 +900,26 @@ ns.UI.JourneyPlate.RegisterPass("witness", {
     end,
 })
 
--- Someone who was there, in the margin (ns.UI.JourneyMargin.Register):
--- who watched you die, tried to save you or saved you. Their card goes
--- where the card they took the place of would have (the user's call, 14
--- Oct: a witness before the killer): order 30, before the killer's (40)
+-- Someone observed, in the margin (ns.UI.JourneyMargin.Register).
+-- Their card goes where the card they took the place of would have
+-- (the user's call, 14 Oct: a witness before the killer): order 30, before the killer's (40)
 -- and the close call's (50); the pass above clears the one they replace,
--- plate.killer for a death's witness, plate.foe for a rescue. Their name
--- opens their page, as a person's strip does. Taken as shown, its creature
--- named on it (a rescue's as the close call's card would); left off, they
--- are told in a sentence of their own (`said.witness`, Text.lua's
--- caption) and the creature their card did not name goes to the words: a
--- death's as its killer's card would have (`said.death`, which the
--- killer's own card, left off, overrules), a rescue's as the close call's
--- (`said.close`).
+-- plate.killer for a death's witness, plate.foe for a survived fight's.
+-- Their name opens their page, as a person's strip does. Automatic cards
+-- name no creature, so a known death's own killer goes to the caption
+-- (`said.death`). Left off, the witness is also told in a sentence of
+-- their own (`said.witness`, Text.lua's caption). Close-call suppression
+-- stays as before (`said.close`); removing it here would expose the
+-- separate close-call text's unverified health claim.
 do
-    -- The creature a witness's death was to, as Text.KillerName takes it
-    -- (the row's, else the death's own); nil for a death to the world or
-    -- to nobody known.
+    -- Only the matched death can supply its killer. A witness row's
+    -- creature is targeting context, and can differ from the death's.
+    -- A probable killer must not become certain merely because a witness
+    -- replaced the death card; leave that uncertainty on the death's own
+    -- tooltip. Old direct death records retain their established wording.
     local function WitnessKiller(w)
-        if w.creature and w.creature.name then return w.creature end
         local d = w.death
-        if d and type(d.name) == "string" and d.name ~= "" and not d.environment then
+        if d and type(d.name) == "string" and d.name ~= "" and not d.environment and not d.probable then
             return { name = d.name, rank = d.rank }
         end
         return nil

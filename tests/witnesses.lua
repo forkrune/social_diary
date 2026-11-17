@@ -1,7 +1,7 @@
--- Witnesses (Features/Witnesses/): who watched while the user died,
--- who tried to save them, and who saved them in a fight they only just
--- survived, all off what the nameplates say; the timeline's lines and the
--- picker's reasons.
+-- Witnesses (Features/Witnesses/): preserve the existing observation and
+-- candidate-selection behaviour, while timeline lines and picker reasons
+-- make no claim about attention, help, rescue or blame. Historical kind
+-- names in these fixtures are not proven actions.
 
 local T = ...
 local mock, F = T.mock, T.F
@@ -122,7 +122,7 @@ Eq(Rows(PUG.guid), 0, "a group member was written down")
 Eq(Rows(HOSTILE.guid), 0, "an enemy was written down")
 Eq(Rows(FRIEND.guid), 0, "the healer was written down")
 Eq(Rows(GARRICK.guid), 0, "someone looking elsewhere was written down")
-Eq(Line(STRANGER.guid, W.WATCHED), "Bram mercilessly watched you die to a Plainstrider in Mulgore", "the line")
+Eq(Line(STRANGER.guid, W.WATCHED), "Bram was seen around the time you died in Mulgore", "the line")
 mock.inCombat = false
 mock.fire("PLAYER_REGEN_ENABLED")
 Eq(T.Rows(STRANGER.guid, W.WATCHED), 1, "written again as combat ended")
@@ -139,7 +139,7 @@ mock.fire("PLAYER_DEAD")
 Eq(Rows(STRANGER.guid), 0, "a look 30 s before the death counted")
 
 -- The client drops the user's target as they die (probe, 14 Oct): the
--- line still names the foe, from while the fight went. With /sd debug on,
+-- neutral line still describes the observation without naming a cause. With /sd debug on,
 -- the trace is kept in the diary, a snapshot of everyone at the death.
 Fresh()
 ns.db.settings.debug = true
@@ -152,7 +152,7 @@ mock.fire("UNIT_TARGET", "nameplate1")
 mock.SetUnit("target", nil)
 mock.fire("PLAYER_DEAD")
 ns.db.settings.debug = false
-Eq(Line(STRANGER.guid, W.WATCHED), "Bram saw you die to a Plainstrider in Mulgore", "the foe was lost with the target")
+Eq(Line(STRANGER.guid, W.WATCHED), "Bram was seen around the time you died in Mulgore", "the observation was lost with the target")
 local trace = table.concat(ns.db.witnessTrace or {}, "\n")
 Check(trace:find("Plainstrider ~B69A3 is on you", 1, true), "the trace does not tell the foe by its GUID")
 Check(trace:find("you died: 2 plate(s), 2 of players", 1, true), "the death's snapshot is not in the trace")
@@ -209,10 +209,10 @@ mock.SetUnit("targettarget", SELF)
 Plate(1, STRANGER, SELF)
 mock.fire("PLAYER_DEAD")
 Eq(T.Rows(STRANGER.guid, W.WATCHED), 1, "one row for the target and the plate")
-Eq(Line(STRANGER.guid, W.WATCHED), "Bram saw you die in Mulgore", "the line without a creature")
+Eq(Line(STRANGER.guid, W.WATCHED), "Bram was seen around the time you died in Mulgore", "the line without a creature")
 
 --------------------------------------------------------------------------
-Section("how long they watched: saw, watched, mercilessly watched")
+Section("targeting duration never changes the automatic claim")
 
 -- Each looks on from `from` seconds before the death, through to it.
 local function Watched(seconds, fraction)
@@ -231,16 +231,16 @@ end
 mock.subZone = "Red Cloud Mesa"
 local row, line = Watched(1)
 Eq(row and row.context.watched, 1, "a second's look")
-Eq(line, "Bram saw you die to a Plainstrider in Red Cloud Mesa", "under 1.5 s, and in the subzone")
+Eq(line, "Bram was seen around the time you died in Red Cloud Mesa", "under 1.5 s, and in the subzone")
 row, line = Watched(2, 0.6)
 Eq(row and row.context.watched, 1.4, "the fraction of a second counts")
-Eq(line, "Bram saw you die to a Plainstrider in Red Cloud Mesa", "1.4 s")
+Eq(line, "Bram was seen around the time you died in Red Cloud Mesa", "1.4 s")
 row, line = Watched(2)
-Eq(line, "Bram watched you die to a Plainstrider in Red Cloud Mesa", "from 1.5 s")
+Eq(line, "Bram was seen around the time you died in Red Cloud Mesa", "from 1.5 s")
 row, line = Watched(4)
-Eq(line, "Bram watched you die to a Plainstrider in Red Cloud Mesa", "4 s")
+Eq(line, "Bram was seen around the time you died in Red Cloud Mesa", "4 s")
 row, line = Watched(5)
-Eq(line, "Bram mercilessly watched you die to a Plainstrider in Red Cloud Mesa", "from 5 s")
+Eq(line, "Bram was seen around the time you died in Red Cloud Mesa", "from 5 s")
 mock.subZone = ""
 
 -- A look broken counts for as long as it ran; a new one starts again.
@@ -275,14 +275,14 @@ Target(Mob(STRIDER, "Plainstrider"))
 Plate(1, STRANGER, Mob(STRIDER, "Plainstrider"))
 Pass(7)
 mock.fire("PLAYER_DEAD")
-Eq(Line(STRANGER.guid, W.WATCHED), "Bram mercilessly watched you die to a Plainstrider in Mulgore", "watching your foe")
+Eq(Line(STRANGER.guid, W.WATCHED), "Bram was seen around the time you died in Mulgore", "watching your foe")
 
 -- A row kept before the watching was timed.
 ns.Interactions.Add(STRANGER.guid, W.WATCHED, { context = { name = "Plainstrider", npcID = 2955 } })
-Eq(Line(STRANGER.guid, W.WATCHED), "Bram watched you die to a Plainstrider in Mulgore", "an old row")
+Eq(Line(STRANGER.guid, W.WATCHED), "Bram was seen around the time you died in Mulgore", "an old row")
 
 --------------------------------------------------------------------------
-Section("tried to save you: in combat with one of your foes")
+Section("death-side candidates: targeting and combat observations")
 
 Fresh()
 Start()
@@ -320,7 +320,7 @@ Eq(T.Rows(STRANGER2.guid, W.HELPED), 1, "the one fighting the creature on you wa
 Eq(Rows(GARRICK.guid), 0, "someone fighting their own was written down")
 Eq(T.Rows(STRANGER.guid, W.HELPED), 0, "someone out of combat with your foe targeted helped")
 Eq(T.Rows(STRANGER.guid, W.WATCHED), 1, "someone out of combat with your foe targeted did not look on")
-Eq(Line(FRIEND.guid, W.HELPED), "Numa tried to save you from Hogger in Mulgore", "the line")
+Eq(Line(FRIEND.guid, W.HELPED), "Numa was seen around the time you died in Mulgore", "the line")
 Eq(ns._test.LatestInteraction(FRIEND.guid, W.HELPED).time, died, "the row's time is the death's")
 
 -- A creature that targets you only after the helper took it on is still
@@ -353,7 +353,7 @@ ns.db.settings.debug = false
 Eq(T.Rows(FRIEND.guid, W.HELPED), 1, "a target and a fight a second apart did not add up")
 
 --------------------------------------------------------------------------
-Section("saved you: fought one of your foes in a fight you survived at 20% or less")
+Section("survived-fight candidates: the existing aggregate threshold")
 
 -- A fight with a helper, and the close-call judge's answer for it.
 local function Rescue(taken, foe)
@@ -377,11 +377,11 @@ ns.db.settings.debug = true
 Rescue(85, { npcID = 2955, name = "Plainstrider" })
 ns.db.settings.debug = false
 Eq(T.Rows(STRANGER.guid, W.SAVED), 1, "the rescuer was not written down")
-Eq(Line(STRANGER.guid, W.SAVED), "Bram saved you from a Plainstrider at 15% health in Mulgore", "the line")
+Eq(Line(STRANGER.guid, W.SAVED), "Bram was seen during a fight you survived in Mulgore", "the line")
 
 -- Healed through by someone the meter does not list: more than all of it.
 Rescue(130)
-Eq(Line(STRANGER.guid, W.SAVED), "Bram saved you at 1% health in Mulgore", "healed through")
+Eq(Line(STRANGER.guid, W.SAVED), "Bram was seen during a fight you survived in Mulgore", "healed through")
 
 -- A judge for a fight that is not kept: nothing.
 Fresh()
@@ -416,10 +416,10 @@ mock.inCombat = false
 mock.fire("PLAYER_REGEN_ENABLED")
 mock.RunTimers()
 Eq(T.Rows(STRANGER2.guid, W.SAVED), 1, "the close-call judge did not ask who saved you")
-Eq(Line(STRANGER2.guid, W.SAVED), "Tullus saved you from a Plainstrider at 18% health in Mulgore", "the line")
+Eq(Line(STRANGER2.guid, W.SAVED), "Tullus was seen during a fight you survived in Mulgore", "the line")
 
 --------------------------------------------------------------------------
-Section("finished off: your foe died, not by you or your group")
+Section("candidate selection without a matching PARTY_KILL")
 
 -- As in the client (14 Oct): the finisher had you targeted, cast through
 -- you, and was never seen in combat. Your foe died with no PARTY_KILL.
@@ -441,7 +441,7 @@ mock.inCombat = false
 mock.fire("PLAYER_REGEN_ENABLED")
 W.Survived(from, mock.now, 96, 100, { npcID = 2958, name = "Timber Wolf" })
 Eq(T.Rows(STRANGER.guid, W.SAVED), 1, "the one who finished your foe off was not written down")
-Eq(Line(STRANGER.guid, W.SAVED), "Bram saved you from a Timber Wolf at 4% health in Mulgore", "the line")
+Eq(Line(STRANGER.guid, W.SAVED), "Bram was seen during a fight you survived in Mulgore", "the line")
 Eq(Rows(GARRICK.guid), 0, "someone looking at another creature was written down")
 
 -- Your own kill (or your pet's, or your group's) is no rescue, whoever
@@ -560,9 +560,9 @@ ns.Interactions.Add(FRIEND.guid, W.HELPED, {})
 ns.Interactions.Add(STRANGER2.guid, W.SAVED, {})
 local reasons = {}
 for _, c in ipairs(ns.Candidates()) do reasons[c.guid] = c.why end
-Eq(reasons[STRANGER.guid], "they watched you die", "watched")
-Eq(reasons[FRIEND.guid], "they tried to save you", "tried to save")
-Eq(reasons[STRANGER2.guid], "they saved you", "saved")
+Eq(reasons[STRANGER.guid], "they were seen around the time you died", "watched")
+Eq(reasons[FRIEND.guid], "they were seen around the time you died", "tried to save")
+Eq(reasons[STRANGER2.guid], "they were seen during a fight you survived", "saved")
 
 -- What each witness did, as Core/Rows.lua's `witness` says it: the core's
 -- index of witnesses goes by it (Journey.WitnessIndex), the plate's choice

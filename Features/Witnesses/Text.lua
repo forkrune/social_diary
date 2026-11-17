@@ -12,8 +12,8 @@ local addonName, ns = ...
 
 local Witnesses = ns.Witnesses
 local Text = ns.UI.JourneyText
-local Capital, Glue, Health, NUMBER, Short, When, Who =
-    Text.Capital, Text.Glue, Text.Health, Text.NUMBER, Text.Short, Text.When, Text.Who
+local Capital, Health, NUMBER, Short, When, Who =
+    Text.Capital, Text.Health, Text.NUMBER, Text.Short, Text.When, Text.Who
 local L, Fmt = ns.L, ns.Fmt
 
 -- Their first name, "Someone" where the buffer no longer has it. A witness the
@@ -34,22 +34,18 @@ function Witnesses.Others(n, prose)
     return ns.Plural(n, L["& another|& %s others##plural"], word)
 end
 
--- What the watching was, by how long (Kind.lua's WATCHING): "saw" under
--- `saw` seconds, "merciless" from `merciless` on, else (or not timed, a
--- row from before) "watched". Nil for a helper.
+-- Only a witness the player wrote in says they saw the death. A sampled
+-- target, however long it stayed selected, does not say where the other
+-- player's attention was. Old automatic rows keep their fields, but no
+-- longer turn their duration into a judgement or more blood on the card.
 function Witnesses.Look(w)
-    if not (w and w.type == Witnesses.WATCHED) then return nil end
-    local W = Witnesses.WATCHING
-    local s = w.watched
-    if type(s) ~= "number" then return "watched" end
-    if s < W.saw then return "saw" end
-    if s >= W.merciless then return "merciless" end
-    return "watched"
+    return w and w.written and w.type == Witnesses.WATCHED and "saw" or nil
 end
 
--- What they did, in the hand under their name: "mercilessly watched you
--- die", "watched you die", "saw you die", "tried to save you", "saved you".
--- The second value is the word the hand underlines (twice), if any.
+-- Automatic rows describe when someone was seen. Targeting a creature
+-- and being in combat at separate moments cannot establish that they
+-- joined the user's fight, let alone tried to help or saved them. The
+-- player's own written interpretation keeps its existing words.
 --
 -- `form` is how the sentence takes it, where English says the same words
 -- and another language does not:
@@ -57,10 +53,13 @@ end
 --   "many"   after several, the verb theirs: "Numa and another saved you"
 --   "line"   a line of its own with no one named before it: "Saved you"
 local DEEDS_SAID = {
-    many = { merciless = L["mercilessly watched you die##many"], saw = L["saw you die##many"],
-        watched = L["watched you die##many"], saved = L["saved you##many"], tried = L["tried to save you##many"] },
-    line = { merciless = L["mercilessly watched you die##line"], saw = L["saw you die##line"],
-        watched = L["watched you die##line"], saved = L["saved you##line"], tried = L["tried to save you##line"] },
+    many = { saw = L["saw you die##many"], saved = L["saved you##many"], tried = L["tried to save you##many"] },
+    line = { saw = L["saw you die##line"], saved = L["saved you##line"], tried = L["tried to save you##line"] },
+}
+local SEEN_SAID = {
+    one = { died = L["was seen around the time you died"], survived = L["was seen during the fight"] },
+    many = { died = L["were seen around the time you died##many"], survived = L["were seen during the fight##many"] },
+    line = { died = L["was seen around the time you died##line"], survived = L["was seen during the fight##line"] },
 }
 --
 -- The deed holds no name, so a locale whose verb agrees with the witness
@@ -70,30 +69,33 @@ local function Theirs(w, text, under)
     return ns.Locale.They(text, record and record.sex or nil), under
 end
 function Witnesses.Deed(w, form)
+    if not (w and w.written) then
+        local said = SEEN_SAID[form] or SEEN_SAID.one
+        return Theirs(w, said[w and w.type == Witnesses.SAVED and "survived" or "died"])
+    end
     local look = Witnesses.Look(w)
     local said = form and DEEDS_SAID[form]
     if said then
         return Theirs(w, said[look or (w and w.type == Witnesses.SAVED and "saved" or "tried")])
     end
-    if look == "merciless" then return Theirs(w, L["mercilessly watched you die"], L["mercilessly"]) end
     if look == "saw" then return Theirs(w, L["saw you die"]) end
-    if look then return Theirs(w, L["watched you die"]) end
     if w and w.type == Witnesses.SAVED then return Theirs(w, L["saved you"]) end
     return Theirs(w, L["tried to save you"])
 end
 
--- The creature, in small print under the deed: "to a Ragged Young Wolf"
--- (a death watched), "from Hogger" (a rescue, tried or not); nil where none
--- was kept.
+-- Only a written interpretation connects this person to the named
+-- creature. An automatic row's creature is the user's foe and may not be
+-- the one the other player targeted, so no such line is drawn for it.
 function Witnesses.Foe(w)
+    if not (w and w.written) then return nil end
     local name = w and w.creature and Text.KillerName(w.creature)
     if not name then return nil end
     return Fmt(w.type == Witnesses.WATCHED and L["to %s##witness"] or L["from %s##witness"], name)
 end
 
 -- The witness in a sentence of its own after the caption's, where the card
--- has no room: "Grisha mercilessly watched you die.", "Numa and another
--- tried to save you.", the timeline's verbs.
+-- has no room: "Grisha was seen around the time you died.", or the player's own
+-- "Numa and another tried to save you." for a written witness.
 function Witnesses.Caption(w)
     local who = Witnesses.Name(w)
     local others = Witnesses.Others(w and w.others, true)
@@ -101,10 +103,10 @@ function Witnesses.Caption(w)
     return Fmt(L["%1$s %2$s."], who, (Witnesses.Deed(w, others and "many" or nil)))
 end
 
--- The card's tooltip: their full name, who they are, what they did (the
--- watching to a tenth of a second), whether they were alone, when. One the player
--- wrote in says what its card says and no more: nothing here measured how long
--- anyone watched or who joined which fight, and the tooltip must not claim it. Its
+-- The card's tooltip: their full name, who they are, the targeting
+-- observation, and when. An automatic row does not measure attention,
+-- establish participation or attribute survival. One the player wrote
+-- in keeps their interpretation, distinct from that observation. Its
 -- mark's tooltip is this too, where the card may have found no room, so the deed
 -- and the creature are spelt out.
 -- What a written witness did, with its creature: "Saved you from Hogger".
@@ -131,21 +133,10 @@ function Witnesses.Tip(w, now)
         who[#who + 1] = ns.UI.Format.ClassName(record)
         if #who > 0 then lines[#lines + 1] = table.concat(who, " ") end
     end
-    local look = Witnesses.Look(w)
-    if look then
-        if type(w.watched) == "number" then
-            lines[#lines + 1] = Fmt(L["Watched for %s"], Glue(Fmt(L["%s seconds"], ns.UI.Format.Decimal(w.watched, 1))))
-        end
-        lines[#lines + 1] = L["Not in a fight themselves"]
-    elseif w.type == Witnesses.SAVED then
-        lines[#lines + 1] = L["Joined your fight"]
-        lines[#lines + 1] = Fmt(L["You came out of it with %s"], Health(w))
-    else
-        lines[#lines + 1] = L["Joined the fight you died in"]
-    end
+    lines[#lines + 1] = L["Had you or a foe targeted"]
     local more = w.others or 0
     if more > 0 then
-        lines[#lines + 1] = ns.Plural(more, L["One other was there too|%s others were there too##plural"],
+        lines[#lines + 1] = ns.Plural(more, L["One other was seen too|%s others were seen too##plural"],
             Capital(NUMBER[more] or tostring(more)))
     end
     local at = w.death or w.call
@@ -223,8 +214,8 @@ end
 -- Someone who was there at a death or a close call on the plate
 -- (Card.lua's Choose) whose card found no room beside it: `said.witness`,
 -- told in a sentence of its own after the rest, in the timeline's words
--- ("Two deaths, to a Sunscale Lashtail. Grisha mercilessly watched you
--- die."). With the card beside the plate the words say nothing of them;
+-- ("Two deaths, to a Sunscale Lashtail. Grisha was seen around the time you
+-- died."). With the card beside the plate the words say nothing of them;
 -- the creature the card names is the margin's to leave out (`said.death`,
 -- `said.close`), as with the killer's. A coda (`at` 10) and nothing else:
 -- it gathers no moment of the plate's.

@@ -1,13 +1,14 @@
 -- The witness card (Features/Witnesses/Card.lua): someone who was there
 -- when you died or nearly did, in the plate's margin, in the place of the
--- card they go before (the killer's, or a rescue's close
--- call's). Its words in every case (saw, watched, mercilessly watched,
--- tried to save you, saved you), "Ilsabet & two others" on the name's one
--- line or the name alone, a rescue's health charted, "mercilessly"
--- underlined twice, and on a watcher's card dried blood across its corner
+-- card they go before (the killer's, or a survived fight's close
+-- call's). Automatic observations use neutral words and no health chart,
+-- blood or judgemental underline. The player's own interpretation keeps
+-- its deed, creature and supplied health. "Ilsabet & two others" stays on
+-- the name's one line or the name alone, and an authored watcher's card
+-- keeps its small stain across its corner
 -- and onto the page (a stain, not crumbs; under the ends of the lines
 -- nearest its corner only, and there only its paler wash; never under the
--- name; more the longer they watched; the same every time; laid flat with
+-- name; the same every time; laid flat with
 -- the card); its sizes by the room it has
 -- and its step down, its rank in the margin and its leader, and the
 -- caption: silent about what the card says, the creature named where the
@@ -56,20 +57,31 @@ local function Helper(kind, extra)
     return w
 end
 
+-- Exercise the actual authored adapter for its retained chart, creature and
+-- stain. Merely constructing an automatic row never marks it as authored.
+local function Written(w)
+    local deed = w.type == "saved_you" and "saved" or (w.type == "tried_to_help" and "tried" or "saw")
+    local rec = { deed = deed, guid = w.guid, t = w.t, pct = w.pct,
+        creature = w.creature and w.creature.name, rank = w.creature and w.creature.rank }
+    local written = W.Written(rec, w.mark)
+    written.others = w.others
+    return written
+end
+
 --------------------------------------------------------------------------
 Section("its words")
 
-Eq(W.Deed(Watcher(0.8)), "saw you die", "a glance")
-Eq(W.Deed(Watcher(1.5)), "watched you die", "from 1.5 s on, watching")
-Eq(W.Deed(Watcher(4.9)), "watched you die", "under five seconds, watching")
+Eq(W.Deed(Watcher(0.8)), "was seen around the time you died", "a brief target observation")
+Eq(W.Deed(Watcher(1.5)), "was seen around the time you died", "duration adds no intention")
+Eq(W.Deed(Watcher(4.9)), "was seen around the time you died", "longer duration adds no intention")
 local deed, under = W.Deed(Watcher(5))
-Eq(deed, "mercilessly watched you die", "from five seconds on, merciless")
-Eq(under, "mercilessly", "the word the hand underlines")
-Eq(W.Deed(Watcher(nil)), "watched you die", "a row from before the watching was timed")
-Eq(W.Deed(Helper("tried_to_help")), "tried to save you", "who tried")
-Eq(W.Deed(Helper("saved_you")), "saved you", "who saved you")
-Eq(W.Foe(Watcher(3)), "to a Ragged Young Wolf", "a death's creature")
-Eq(W.Foe(Helper("saved_you")), "from Hogger", "a rescue's creature, a rare bare as a killer's")
+Eq(deed, "was seen around the time you died", "five seconds does not establish blame")
+Eq(under, nil, "no automatic judgement to underline")
+Eq(W.Deed(Watcher(nil)), "was seen around the time you died", "an older untimed row stays neutral")
+Eq(W.Deed(Helper("tried_to_help")), "was seen around the time you died", "targeting cannot establish an attempt")
+Eq(W.Deed(Helper("saved_you")), "was seen during the fight", "targeting cannot establish a rescue")
+Eq(W.Foe(Watcher(3)), nil, "a target observation cannot establish a killer")
+Eq(W.Foe(Helper("saved_you")), nil, "the player's foe need not be the other player's")
 Eq(W.Foe(Watcher(3, { creature = false })), nil, "no creature kept")
 Eq(W.Others(0), nil, "alone")
 Eq(W.Others(1), "& another", "one more, on the name's line")
@@ -77,26 +89,26 @@ Eq(W.Others(2), "& two others", "two more, on the name's line")
 Eq(W.Others(2, true), "and two others", "two more, in a sentence")
 Eq(W.Name(Watcher(3)), "Grisha", "their first name")
 Eq(W.Name(Watcher(3, { guid = "Player-0000-00000000" })), "Someone", "a name the buffer lost")
-Eq(W.Caption(Watcher(6.4, { others = 2 })), "Grisha and two others mercilessly watched you die.",
+Eq(W.Caption(Watcher(6.4, { others = 2 })), "Grisha and two others were seen around the time you died.",
     "the caption's sentence")
-Eq(W.Caption(Helper("tried_to_help")), "Grisha tried to save you.", "the caption's sentence, helped")
+Eq(W.Caption(Helper("tried_to_help")), "Grisha was seen around the time you died.", "the caption's sentence, legacy helper")
 
 local title, lines = W.Tip(Watcher(6.43, { others = 1 }), now)
 Eq(title, "Grisha", "the tooltip's title")
 local tip = table.concat(lines, "|")
-Check(tip:find("^Level 17 Orc Rogue|Watched for 6.4\194\160seconds|Not in a fight themselves|One other was there too|"),
+Check(tip:find("^Level 17 Orc Rogue|Had you or a foe targeted|One other was seen too|"),
     "the watcher's tooltip: " .. tip)
 _, lines = W.Tip(Helper("saved_you"), now)
 tip = table.concat(lines, "|")
-Check(tip:find("|Joined your fight|You came out of it with 6\194\160health|", 1, true) ~= nil
-    or tip:find("Joined your fight|You came out of it with 6%%\194\160health"), "the rescue's tooltip: " .. tip)
+Check(tip:find("|Had you or a foe targeted|", 1, true) ~= nil, "the survived fight's tooltip: " .. tip)
+Check(not tip:find("6%%") and not tip:find("Joined"), "no attributed rescue or exact health: " .. tip)
 
 -- The caption: the witness in a sentence after the rest, only when given.
 local plate = { mapID = 1411, moments = { { kind = "death", t = now - 600 } } }
 Eq(Text.PlateCaption(plate, nil, { death = "a Ragged Young Wolf" }), "A death, to a Ragged Young Wolf.",
     "the caption without a witness")
 Eq(Text.PlateCaption(plate, nil, { death = "a Ragged Young Wolf", witness = Watcher(6.4) }),
-    "A death, to a Ragged Young Wolf. Grisha mercilessly watched you die.", "the caption with the witness left off")
+    "A death, to a Ragged Young Wolf. Grisha was seen around the time you died.", "the caption with the witness left off")
 
 --------------------------------------------------------------------------
 Section("the card: its name line, chart and sizes")
@@ -108,7 +120,7 @@ local function Lay(w, width, key)
     return card:Layout(10, 10, width)
 end
 
--- No seconds on the card, in any case: the words carry it.
+-- Automatic duration changes neither the claim nor its visual emphasis.
 for _, s in ipairs({ 1.2, 3.7, 6.4 }) do
     Lay(Watcher(s), 176)
     Eq(card.plan.row, nil, s .. " s watched has a row under the words")
@@ -117,18 +129,20 @@ end
 Lay(Watcher(3.7), 176)
 Eq(card.underlined, nil, "plain watching is underlined")
 Lay(Watcher(6.4), 240)
-Check(card.underlined ~= nil and (card.pieces or 0) > 0, "mercilessly is not underlined")
-Eq(card:Deed(), "mercilessly watched you die", "the merciless deed")
-Eq(card:Foe(), "to a Ragged Young Wolf", "the foe's line")
--- The underline runs under the word, not past its line.
-local u = card.underlined
-Check(u.x1 > u.x0 and u.x1 - u.x0 < 120, "the underline is not under the word")
+Eq(card.underlined, nil, "a long automatic observation has an underline")
+Eq(card.pieces, 0, "a long automatic observation has emphasis strokes")
+Eq(card:Deed(), "was seen around the time you died", "the neutral observation")
+Eq(card:Foe(), "", "no inferred foe line")
 
--- A rescue: its health charted in rubric; one who tried: neither.
-Lay(Helper("saved_you"), 176)
-Eq(card.plan.row and card.plan.row.kind, "chart", "the rescue's health is not charted")
-Check(card.barFill:IsShown() and card.figure:GetText() == "6%", "the chart is not drawn")
+-- Only an authored rescue charts supplied health. Reusing that card for an
+-- automatic observation must hide every part of the old chart.
+Lay(Written(Helper("saved_you")), 176)
+Eq(card.plan.row and card.plan.row.kind, "chart", "the authored health is not charted")
+Check(card.barFill:IsShown() and card.figure:GetText() == "6%", "the authored chart is not drawn")
 Eq(card.plan.row.bar, 70, "the bar's width in a wide column")
+Lay(Helper("saved_you"), 176)
+Eq(card.plan.row, nil, "an automatic row charts its estimated health")
+Check(not card.barFill:IsShown() and not card.figure:IsShown(), "the authored chart leaked onto an automatic row")
 Lay(Helper("tried_to_help"), 176)
 Eq(card.plan.row, nil, "one who tried has a chart")
 Check(not card.barFill:IsShown() and not card.figure:IsShown(), "the last card's chart stayed")
@@ -138,6 +152,7 @@ Check(not card.barFill:IsShown() and not card.figure:IsShown(), "the last card's
 -- its own.
 Lay(Watcher(1.2, { others = 2 }), 220)
 Eq(card.name:GetText(), "Grisha & two others", "the name line in XL")
+Eq(card:Deed(), "were seen around the time you died", "the deed agrees with all the names shown")
 Lay(Watcher(1.2, { others = 1 }), 142)
 Eq(card.form .. ":" .. card.name:GetText(), "M:Grisha & another", "the name line in M")
 local _, oneLine = card:Layout(10, 10, 142)
@@ -149,6 +164,7 @@ Eq(oneLine, alone, "who else was there costs the card a line")
 Lay(Watcher(1.2, { others = 2 }), 126)
 Eq(card.name:GetText(), "Grisha", "the name line too wide for the box keeps its others")
 Eq(card.plan.others, nil, "the others left off are still planned")
+Eq(card:Deed(), "was seen around the time you died", "a name alone takes the singular deed")
 
 -- Sizes by the room: XL in a wide box, L in a column, M in a narrow one;
 -- the deed's hand a size down from XL, the name too in M.
@@ -160,21 +176,21 @@ Lay(Watcher(3.7), 150)
 Eq(card.form, "L", "the 150 px column")
 Lay(Watcher(3.7), 142)
 Eq(card.form, "M", "a row's 142 px box")
-Lay(Helper("saved_you"), 122)
+Lay(Written(Helper("saved_you")), 122)
 Eq(card.form, "M", "the 122 px column")
 Eq(card.plan.row.bar, 56, "the bar's width in a narrow column")
 -- The deed on one line in the hand's own size is XL's: where it will not
 -- go (a box under XL's least, or in the client a long deed at 16 px), L.
 Lay(Watcher(6.4), 176)
-Eq(card.form, "L", "the merciless deed in the 176 px column")
+Eq(card.form, "L", "the neutral deed in the 176 px column")
 Lay(Watcher(6.4), 240)
-Eq(card.form, "XL", "the merciless deed in a wide box")
+Eq(card.form, "XL", "the neutral deed in a wide box")
 -- Too narrow for any: left off.
 Lay(Watcher(3.7), 60)
 Check(card.overfull, "a card in a box too narrow for it is not overfull")
 
--- Short of height: the foe's line, then nothing.
-Lay(Watcher(3.7, { others = 2 }), 130)
+-- Short of height: an authored foe's line, then nothing.
+Lay(Written(Watcher(3.7, { others = 2 })), 130)
 local _, tall = card:Layout(10, 10, 130)
 Check(card:Smaller(), "the foe's line is not given up")
 local _, h1 = card:Layout(10, 10, 130)
@@ -194,7 +210,7 @@ Eq(card.name:GetText(), "Grisha", "the card's name")
 Eq(card.guid, GRISHA, "the name opens nobody's page")
 
 --------------------------------------------------------------------------
-Section("the card: blood on a watcher's")
+Section("the card: only an authored witness has blood")
 
 local function Shown()
     local n = 0
@@ -209,27 +225,20 @@ Eq(Shown(), 0, "a rescue's card shows blood")
 Lay(Helper("tried_to_help"), 176)
 Eq(card.blood, nil, "a helper's card has blood")
 
--- On every watcher's, more the longer they watched: by the stain's area
--- (the pieces' count is no measure, as InkBlot coarsens a large stain).
-local function Area(quads)
-    local area = 0
-    for _, q in ipairs(quads) do
-        area = area + math.abs((q[1] * q[4] - q[3] * q[2]) + (q[3] * q[6] - q[5] * q[4]) + (q[5] * q[8] - q[7] * q[6])
-            + (q[7] * q[2] - q[1] * q[8])) / 2
-    end
-    return area
-end
-local areas = {}
+-- A sampled target duration says nothing about neglect. Neither a short
+-- nor a long automatic observation gets a stain.
 for _, s in ipairs({ 1.2, 3.7, 6.4 }) do
     Lay(Watcher(s), 176, "blood")
-    Check(card.blood and card.blood.drawn > 0, s .. " s watched has no blood")
-    Eq(Shown(), card.blood.drawn, "the blood's pieces shown")
-    areas[#areas + 1] = math.floor(Area(card.blood.stain.levels[1]))
+    Eq(card.blood, nil, s .. " s observed gained a stain")
+    Eq(Shown(), 0, "an automatic observation shows blood")
 end
-Check(areas[1] < areas[2] and areas[2] < areas[3], "more blood the longer they watched: " .. table.concat(areas, ", "))
--- A stain, not crumbs (14 Oct, in the client): watched, at least 250 px²
--- of it (about a 18 px disc), mercilessly half as much again.
-Check(areas[2] >= 250 and areas[3] >= 1.5 * areas[2], "the stains are crumbs: " .. table.concat(areas, ", "))
+
+Lay(Written(Watcher(0)), 176, "blood")
+Check(card.blood and card.blood.drawn > 0, "the authored witness lost its stain")
+Eq(Shown(), card.blood.drawn, "the authored stain's pieces shown")
+Lay(Watcher(6.4), 176, "blood")
+Eq(card.blood, nil, "the authored stain leaked into a reused automatic card")
+Eq(Shown(), 0, "reused automatic card retained blood textures")
 
 -- Under the writing (the user, 14 Oct: under the text's edge is fine): it
 -- may run under the right end of the two lines nearest its corner (at most
@@ -241,7 +250,7 @@ local B = Card.BLOOD
 local ranUnder = 0
 for _, key in ipairs({ "a", "b", "c", "d", "e", "f", "g", "h" }) do
     for _, width in ipairs({ 142, 176, 240 }) do
-        Lay(Watcher(6.4, { others = 2 }), width, key)
+        Lay(Written(Watcher(0, { others = 2 })), width, key)
         local W, H = card.box[3], card.box[4]
         local blood = card.blood
         local hard, inked, on, off, far = 0, 0, 0, 0, 0
@@ -309,22 +318,22 @@ do
 end
 
 -- The same card bleeds the same every time, another card otherwise.
-Lay(Watcher(6.4), 176, "same")
+Lay(Written(Watcher(0)), 176, "same")
 local first = card.blood.points
-Lay(Watcher(6.4), 176, "same")
+Lay(Written(Watcher(0)), 176, "same")
 local again = card.blood.points
 local same = #first == #again
 for i = 1, math.min(#first, #again) do
     same = same and first[i].x == again[i].x and first[i].y == again[i].y and first[i].t == again[i].t
 end
 Check(same, "the same card bled differently")
-Lay(Watcher(6.4), 176, "other")
+Lay(Written(Watcher(0)), 176, "other")
 local other = card.blood.points
 Check(#other ~= #first or other[1].x ~= first[1].x or other[2].y ~= first[2].y, "another card bled the same")
 
 -- Laid flat: the card square, its blood still there, square with it.
 ns.SetSetting("flatSheets", true)
-Lay(Watcher(6.4), 176, "same")
+Lay(Written(Watcher(0)), 176, "same")
 Eq(card.turn, 0, "laid flat, the card turns")
 Check(card.blood and card.blood.drawn > 0, "laid flat, the blood is gone")
 ns.SetSetting("flatSheets", false)
@@ -387,8 +396,8 @@ table.sort(seen)
 -- oasis has a week's page, or level 16's, to itself, XL; it shared one
 -- with the print before it, M, until the pages went by sitting. Brakk's
 -- crag shares its sitting's page with the Barrens plate before it, M.)
-Eq(table.concat(seen, ", "), "10:Wenna:tried to save you:M, 11:Numa:saved you:L, 13:Corvin:watched you die:L, "
-    .. "14:Ilsabet & two others:saw you die:M, week:Brakk:tried to save you:M, week:Grisha:mercilessly watched you die:XL",
+Eq(table.concat(seen, ", "), "10:Wenna:was seen around the time you died:M, 11:Numa:was seen during the fight:L, 13:Corvin:was seen around the time you died:L, "
+    .. "14:Ilsabet & two others:were seen around the time you died:M, week:Brakk:was seen around the time you died:M, week:Grisha:was seen around the time you died:XL",
     "the made-up witnesses' cards")
 -- In the margin where the killer's card would be: after the people and
 -- the finds, ahead of the close call's card and the luck. (The small note
@@ -419,8 +428,9 @@ for _, at in ipairs(T.DiaryPages(page)) do
 end
 Eq(tester, "person,duel,campfire", "the evening with Tester's margin")
 
--- Level 13: the card's leader goes to the death's cross; the caption says
--- "a death" and leaves the creature and the watcher to the card.
+-- Level 13: the card's leader goes to the death's cross. Its automatic
+-- observation names no creature, so the matched death names its killer
+-- in the caption; the person is not repeated beside their card.
 for i, e in ipairs(page.recap.entries) do
     if e.level == 13 then Open(i) end
 end
@@ -433,7 +443,7 @@ Check(leader ~= nil, "the witness card has no leader")
 Eq(leader and (leader.mark[1] .. "," .. leader.mark[2]), plate13.witness.mark[1] .. "," .. plate13.witness.mark[2],
     "the leader does not go to the death's cross")
 local words = table.concat(Captions(), " | ")
-Check(words:find("a death") and not words:find("Kolkar") and not words:find("Corvin"),
+Check(words:find("a death, to a Kolkar Pack Runner") and not words:find("Corvin"),
     "level 13's words say what the card says: " .. words)
 Eq(page.witnessesWritten, 1, "the witness cards written")
 
@@ -445,12 +455,12 @@ ns.UI.RedrawJourneyPage()
 Eq(#Witnesses(), 0, "a card with no room is drawn")
 words = table.concat(Captions(), " | ")
 Check(words:find("a death, to a Kolkar Pack Runner") ~= nil, "the creature is not in the words: " .. words)
-Check(words:find("Corvin watched you die.", 1, true) ~= nil, "the witness is not in the words: " .. words)
+Check(words:find("Corvin was seen around the time you died.", 1, true) ~= nil, "the witness is not in the words: " .. words)
 Eq(page.witnessesWritten, 0, "a card left off was counted")
 for name, form in pairs(Card.FORMS) do form.least = least[name] end
 
--- Short of room for its foe's line, the card gives it up and the words
--- name the creature, not the witness.
+-- Automatic witnesses have no foe line. Even an exaggerated foe-line
+-- height cannot remove their card; the matched death still names its killer.
 local foeLine = Card.WITNESS.foeLine
 Card.WITNESS.foeLine = 400
 ns.UI.RedrawJourneyPage()

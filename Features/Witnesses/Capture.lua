@@ -1,39 +1,22 @@
--- Witnesses' capture (Kind.lua): who stood by while the user died, who
--- waded in, and who pulled them through a fight they only just survived.
+-- Witnesses' capture: targeting and combat observations around the user's
+-- fights. The historical saved row kinds stay unchanged:
 --
--- Three rows on the other player (Interactions.Add, Kind.lua's kinds), for
--- strangers on the user's side only:
+--   watched_death  the player or a foe was targeted in a recent sample
+--                  taken out of combat; context.watched is the sampled
+--                  targeting streak, not time spent paying attention.
+--   tried_to_help  a foe was targeted and combat was observed at some
+--                  point in the fight (not necessarily together), or the
+--                  player/foe was targeted before a foe died without a
+--                  matching PARTY_KILL.
+--   saved_you      the same candidates in a survived fight selected by
+--                  the existing aggregate damage/healing threshold.
 --
---   watched_death  had the user, or one of their foes, targeted in the
---                  last moments before they died, out of combat
---                  themselves, and never fought one of the user's foes.
---                  Not whoever merely ran past: they were looking.
---                  context.watched is for how long, unbroken, up to the
---                  death (Kind.lua's WATCHING says what the line makes of
---                  it), and context.subZone where.
---   tried_to_help  fought one of the user's foes in the fight the user
---                  died in, or finished one off.
---   saved_you      fought one of the user's foes, or finished one off, in
---                  a fight the user survived with SAVED of their health or
---                  less, judged as close calls are (Features/CloseCalls/
---                  Capture.lua):
---                  the damage meter's damage taken, less the healing it
---                  lists, against the maximum health, so reckoned from full
---                  health. context.pct is what was left.
---
--- The combat log is closed to addons since 12.0, so nobody's damage or
--- heals can be read, and Recent Allies records no open-world fights in this
--- build (checked in the client, 14 Oct). What is left is what a nameplate
--- says: a nearby player's target, and whether they are in combat. "Fought
--- one of the user's foes" is: had it targeted at some point in the fight,
--- and was in combat at some point in it. The two are noted apart, as the
--- plates are read once a second and a late helper can target a weak foe,
--- hit it and see it die in between. A foe is a creature that had the user
--- targeted at some point, off its plate or the user's target's target. (A
--- foe turning on a helper would be surer, but the user holds its attention
--- nearly always.) It can also be someone fighting their own one of the
--- same pack, so the line says "tried to". In combat with the user targeted
--- is neither: a healer looks just like that.
+-- None of these observations establishes an attack, help, rescue, intent
+-- or neglect. A missing PARTY_KILL does not identify who killed a foe.
+-- context.pct is the historical aggregate estimate, not measured health
+-- remaining. Keep the saved shape and selection behaviour; automatic
+-- wording and cards never present these inferences as observed facts.
+-- Explicit player interpretations use the separate Written path.
 --
 -- Group members are left out: their fights with the user are the
 -- session's (Core/Sessions.lua), and the group's healers would look on.
@@ -54,7 +37,7 @@
 -- The judge (Features/CloseCalls/Capture.lua) tells a fight the user survived as
 -- SD_FIGHT_SURVIVED (Core/Events.lua's header) where it called
 -- Witnesses.Survived before the move; dispatch is synchronous, so the
--- rescue's rows are written at the same point (inside the dispatcher's
+-- witness rows are written at the same point (inside the dispatcher's
 -- pcall now, so an error here no longer unwinds the judge: its close call
 -- is still kept).
 
@@ -64,8 +47,8 @@ local Witnesses = ns.Witnesses
 
 local WATCHED, HELPED, SAVED_ROW = Witnesses.WATCHED, Witnesses.HELPED, Witnesses.SAVED
 
--- Out of a fight alive with this much of the health or less, as close
--- calls reckon it (ns.CloseCalls.LEFT is the stricter 10%).
+-- Existing aggregate threshold for selecting survived fights. It does not
+-- measure remaining health (ns.CloseCalls.LEFT is the stricter threshold).
 local SAVED = 0.20
 
 -- Seconds. watch: how long before the death a look still counts. scan: how
@@ -76,8 +59,8 @@ local SAVED = 0.20
 -- file's may be. kill: how long PARTY_KILL may trail a foe's death.
 local WAIT = { watch = 10, scan = 1, fight = 5, match = 2, kill = 0.5 }
 
--- How long an onlooker watched, and what breaks a look (`gap`): Kind.lua's
--- WATCHING, which the words read too.
+-- What breaks a sampled targeting streak (`gap`): Kind.lua's WATCHING.
+-- The duration does not change the automatic words.
 local WATCHING = Witnesses.WATCHING
 
 -- A clock to the fraction of a second, for how long someone looked: the
@@ -255,8 +238,9 @@ local function ReadAll(f)
     Mine(f)
 end
 
--- Who fought one of the user's foes in `f`: had it targeted, and was in
--- combat, each at some point in the fight; or finished one off.
+-- Historical helper candidates: target and combat observations may be
+-- separated or unrelated. Finished adds target coincidences at a foe's
+-- death, not a confirmed killer. These candidates only establish presence.
 local function Helpers(f)
     local helpers = {}
     for guid in pairs(f.rescuers) do helpers[guid] = true end
@@ -277,8 +261,8 @@ end
 -- Writing
 --------------------------------------------------------------------------
 
--- For /sd debug: how a fight was judged, "3 foe(s); helped: Bram; in
--- combat, not with your foes: Numa".
+-- For /sd debug: which observations selected candidates, without claiming
+-- they helped or were fighting the user's foes.
 local function Judged(f, helpers, what)
     if not ns.DebugOn() then return end
     local foes, helped, other = {}, {}, {}
@@ -287,7 +271,7 @@ local function Judged(f, helpers, what)
     for guid in pairs(f.fought) do
         if not helpers[guid] then other[#other + 1] = Label(f, guid) end
     end
-    Trace(false, "%s; foes: %s; helped: %s; in combat, not with your foes: %s", what,
+    Trace(false, "%s; foes: %s; candidates: %s; other combat observations: %s", what,
         #foes > 0 and table.concat(foes, ", ") or "none",
         #helped > 0 and table.concat(helped, ", ") or "nobody", #other > 0 and table.concat(other, ", ") or "nobody")
 end
@@ -356,7 +340,7 @@ local function Died()
         -- Not in a fight (a fall): only who looked on.
         f = NewFight(now)
     end
-    -- Where everyone's eyes are as the user falls.
+    -- Sample the targeting context at the user's death.
     ReadAll(f)
     Snapshot(f, "you died")
 
@@ -391,11 +375,11 @@ function Witnesses.Survived(started, ended, taken, max, foe)
         end
     end
     if not f then
-        Trace(false, "the close fight was not watched")
+        Trace(false, "no matching fight was observed")
         return
     end
     local helpers = Helpers(f)
-    Judged(f, helpers, ("you survived with %d%%"):format(math.max(0, 100 - math.floor(taken / max * 100 + 0.5))))
+    Judged(f, helpers, ("you survived; aggregate net damage %s, max health %s"):format(taken, max))
     local pct = math.max(1, math.min(math.floor(SAVED * 100), 100 - math.floor(taken / max * 100 + 0.5)))
     local context = { pct = pct, npcID = foe and foe.npcID, name = foe and foe.npcID and foe.name or nil,
         rank = foe and foe.npcID and foe.rank or nil }
@@ -460,16 +444,12 @@ ns.On("SD_FIGHT_SURVIVED", function(_, started, ended, taken, max, foe)
 end)
 
 --------------------------------------------------------------------------
--- A foe finished off by someone else
+-- A foe's death without a matching group kill
 --------------------------------------------------------------------------
 --
--- A one-shot finisher shows neither signal above: they may cast through
--- the user (their target the user, the spell on the user's), and a foe
--- dead at once leaves them out of combat before the next reading (seen in
--- the client, 14 Oct). What shows is the foe dying with no PARTY_KILL,
--- which fires for every kill by the user, their pet or their group:
--- someone outside it killed it. The rescuer is whoever
--- had the user or that foe targeted in the moments before.
+-- Preserve the existing candidate selection when UNIT_DIED has no matching
+-- PARTY_KILL. Those who recently targeted the user or the foe are candidates
+-- only: the missing event cannot identify a finisher or their intention.
 
 local ours = {}  -- [creature guid] = time of the PARTY_KILL
 
@@ -497,8 +477,8 @@ local function Finished(f, victim, at)
         f.rescuers[guid] = true
         names[#names + 1] = Label(f, guid)
     end
-    Trace(false, "%s died, not by you: %s", Label(f, victim),
-        #names > 0 and ("finished off by " .. table.concat(names, ", ")) or "nobody to thank")
+    Trace(false, "%s died without a matching PARTY_KILL; targeting candidates: %s", Label(f, victim),
+        #names > 0 and table.concat(names, ", ") or "none")
 end
 
 ns.On("UNIT_DIED", function(_, guid)

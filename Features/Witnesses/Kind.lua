@@ -1,6 +1,7 @@
--- Witnesses: strangers around the user's fights, who stood by while the
--- user died, who waded in, and who pulled them through a fight they only
--- just survived (14 Oct). A feature in a folder of its own
+-- Witnesses: strangers observed around the user's fights. Automatic rows
+-- describe their presence, not attention, intentions or a rescue. The
+-- player may write a stronger interpretation in a custom witness below.
+-- A feature in a folder of its own
 -- (.claude/skills/new-feature/folder.md):
 --
 --   Kind.lua     what a witness is to the diary: its three row kinds,
@@ -53,13 +54,9 @@ ns.Witnesses = Witnesses
 local WATCHED, HELPED, SAVED = "watched_death", "tried_to_help", "saved_you"
 Witnesses.WATCHED, Witnesses.HELPED, Witnesses.SAVED = WATCHED, HELPED, SAVED
 
--- Seconds an onlooker watched the user die (the timeline's words below,
--- the card's, Text.lua's Look): under `saw` they only saw it; from
--- `merciless` on, they watched mercilessly. A look is unbroken while no
--- reading in between finds them looking elsewhere, or in combat, and
--- readings are no more than `gap` apart (the scan's beat, and some:
--- Capture.lua).
-local WATCHING = { saw = 1.5, merciless = 5, gap = 2.5 }
+-- Maximum gap between samples of the same targeting context. The stored
+-- duration is not attention or intent and never strengthens the wording.
+local WATCHING = { gap = 2.5 }
 Witnesses.WATCHING = WATCHING
 
 --------------------------------------------------------------------------
@@ -70,44 +67,27 @@ Witnesses.WATCHING = WATCHING
 -- user's side only, each at the death's or the close call's own time
 -- (Capture.lua says what each takes):
 --
---   watched_death  they looked on as the user died. context.watched is for
---                  how long, unbroken, up to the death (WATCHING), and
---                  context.subZone where
---   tried_to_help  they fought one of the user's foes in the fight the user
---                  died in, or finished one off
---   saved_you      the same, in a fight the user survived with little of
---                  their health left; context.pct is what was left
+-- The three saved kind names are historical and stay unchanged. They
+-- describe targeting/combat observations before a death or in a survived
+-- fight (Capture.lua), not proven actions by the other player.
+-- context.watched and context.pct remain stored for compatibility; neither
+-- establishes attention, rescue, or measured remaining health.
 --
 -- Each carries the creature ({ npcID, name, rank } in context) where one
 -- was known. Always a line (`moment`); the picker says why it offers them.
--- Each sets Core/Rows.lua's `witness`, what the witness did ("watched" or
--- "helped"): the core's index of witnesses reads it (Journey.WitnessIndex),
--- and the card and the plate's choice go by it (who acted before who
--- watched).
+-- Each sets Core/Rows.lua's historical `witness` category ("watched" or
+-- "helped"): the core's index reads it (Journey.WitnessIndex), and the
+-- card keeps the existing selection order. It is not an action claim.
 --
--- Their words: "Bram watched you die to a Sunscale Lashtail", "Bram tried
--- to save you from a Sunscale Lashtail", "Bram saved you at 6% health",
--- each "in Hillsbrad Foothills". The creature as Your Diary names a killer
--- (ns.UI.TimelineText.Foe).
+-- Targeting can be unrelated to the player's fight. A remembered target
+-- also need not be the killer or the other player's foe, so these rows
+-- name neither an inferred cause nor a health value.
 
 local TT = ns.UI.TimelineText
-local Foe, Place = TT.Foe, TT.Place
+local Place = TT.Place
 local L, Fmt = ns.L, ns.Fmt
 
 local function Always() return true end
-
--- Each sentence is whole, one template for each of its optional parts:
--- the creature (`foe`) and the place (`zone`, the zone's phrase), each
--- template's values in the order they are named (them, foe, health,
--- zone).
-local function Values(...)
-    local values = {}
-    for i = 1, select("#", ...) do
-        local v = select(i, ...)
-        if v then values[#values + 1] = v end
-    end
-    return unpack(values)
-end
 
 -- Where a witness's row was, as one phrase ("in Coldridge Valley"): the
 -- subzone where the row keeps one (`sub`, which has no id: ns.ZoneIn asks
@@ -118,82 +98,30 @@ local function Where(row, sub, unplaced)
     return Place(row)
 end
 
--- "Bram mercilessly watched you die to a Kobold Vermin in Coldridge
--- Valley": by how long they watched (WATCHING), under 1.5 s only "saw you
--- die", from 5 s on "mercilessly". In the subzone where there is one; a
--- row kept before the watching was timed is plain "watched".
-local WATCHED_WORDS = {
-    watched = {
-        foe = { zone = L["%1$s watched {you} die to %2$s %3$s##zone"], alone = L["%1$s watched {you} die to %2$s"] },
-        none = { zone = L["%1$s watched {you} die %2$s##zone"], alone = L["%s watched {you} die"] },
-    },
-    saw = {
-        foe = { zone = L["%1$s saw {you} die to %2$s %3$s##zone"], alone = L["%1$s saw {you} die to %2$s"] },
-        none = { zone = L["%1$s saw {you} die %2$s##zone"], alone = L["%s saw {you} die"] },
-    },
-    merciless = {
-        foe = { zone = L["%1$s mercilessly watched {you} die to %2$s %3$s##zone"],
-            alone = L["%1$s mercilessly watched {you} die to %2$s"] },
-        none = { zone = L["%1$s mercilessly watched {you} die %2$s##zone"], alone = L["%s mercilessly watched {you} die"] },
-    },
-}
+-- Both death-side kinds have the same observable outcome. Whole templates
+-- keep the place optional and let shared-diary wording name the owner.
+local function DeathText(row, guid, unplaced)
+    local them = guid and ns.Characters.Name(guid) or L["Someone"]
+    local sub = row.type == WATCHED and row.context and row.context.subZone
+    local zone = Where(row, sub, unplaced)
+    local template = zone and L["%1$s was seen around the time {you} died %2$s##zone"]
+        or L["%s was seen around the time {you} died"]
+    return ns.UI.Format.You(row.me, Fmt(template, them, zone))
+end
 
-ns.Rows.Register(WATCHED, { witness = "watched", plate = 3, moment = Always, reason = L["they watched you die"],
+ns.Rows.Register(WATCHED, { witness = "watched", plate = 3, moment = Always,
+    reason = L["they were seen around the time you died"], text = DeathText, icon = "around" })
+
+ns.Rows.Register(HELPED, { witness = "helped", plate = 3, moment = Always,
+    reason = L["they were seen around the time you died"], text = DeathText, icon = "together" })
+
+ns.Rows.Register(SAVED, { witness = "helped", plate = 3, moment = Always, reason = L["they were seen during a fight you survived"],
     text = function(row, guid, unplaced)
-        local them = guid and ns.Characters.Name(guid) or L["They##someone"]
-        local c = row.context or {}
-        local watching = Witnesses.WATCHING
-        local how = "watched"
-        if c.watched and c.watched < watching.saw then
-            how = "saw"
-        elseif c.watched and c.watched >= watching.merciless then
-            how = "merciless"
-        end
-        local foe = Foe(row)
-        local zone = Where(row, c.subZone, unplaced)
-        local template = WATCHED_WORDS[how][foe and "foe" or "none"][zone and "zone" or "alone"]
-        return ns.UI.Format.You(row.me, Fmt(template, Values(them, foe, zone)))
-    end,
-    icon = "around" })
-
-local HELPED_WORDS = {
-    foe = { zone = L["%1$s tried to save {you} from %2$s %3$s##zone"], alone = L["%1$s tried to save {you} from %2$s"] },
-    none = { zone = L["%1$s tried to save {you} %2$s##zone"], alone = L["%s tried to save {you}"] },
-}
-
-ns.Rows.Register(HELPED, { witness = "helped", plate = 3, moment = Always, reason = L["they tried to save you"],
-    text = function(row, guid, unplaced)
-        local them = guid and ns.Characters.Name(guid) or L["They##someone"]
-        local foe = Foe(row)
+        local them = guid and ns.Characters.Name(guid) or L["Someone"]
         local zone = Where(row, nil, unplaced)
-        local template = HELPED_WORDS[foe and "foe" or "none"][zone and "zone" or "alone"]
-        return ns.UI.Format.You(row.me, Fmt(template, Values(them, foe, zone)))
-    end,
-    icon = "together" })
-
--- "Bram saved you from a Kobold Vermin at 6% health in Coldridge Valley".
-local SAVED_WORDS = {
-    foe = {
-        health = { zone = L["%1$s saved {you} from %2$s at %3$s%%\194\160health %4$s##zone"],
-            alone = L["%1$s saved {you} from %2$s at %3$s%%\194\160health"] },
-        none = { zone = L["%1$s saved {you} from %2$s %3$s##zone"], alone = L["%1$s saved {you} from %2$s"] },
-    },
-    none = {
-        health = { zone = L["%1$s saved {you} at %2$s%%\194\160health %3$s##zone"],
-            alone = L["%1$s saved {you} at %2$s%%\194\160health"] },
-        none = { zone = L["%1$s saved {you} %2$s##zone"], alone = L["%s saved {you}"] },
-    },
-}
-
-ns.Rows.Register(SAVED, { witness = "helped", plate = 3, moment = Always, reason = L["they saved you"],
-    text = function(row, guid, unplaced)
-        local them = guid and ns.Characters.Name(guid) or L["They##someone"]
-        local foe = Foe(row)
-        local pct = row.context and row.context.pct
-        local health = pct and tostring(pct)
-        local zone = Where(row, nil, unplaced)
-        local template = SAVED_WORDS[foe and "foe" or "none"][health and "health" or "none"][zone and "zone" or "alone"]
-        return ns.UI.Format.You(row.me, Fmt(template, Values(them, foe, health, zone)))
+        local template = zone and L["%1$s was seen during a fight {you} survived %2$s##zone"]
+            or L["%s was seen during a fight {you} survived"]
+        return ns.UI.Format.You(row.me, Fmt(template, them, zone))
     end,
     icon = "together" })
 
@@ -248,12 +176,10 @@ end
 -- the same reason it never goes through At or Card.Choose: a written witness
 -- and a real one can share a plate, each with their own card.
 --
--- The three deeds the card knows, as what the card reads off a chosen witness
--- (Card.lua's Choose): the row type and its `witness` flag. "Saw" is a watch
--- of no seconds, because that is what makes Look say "saw" and spill the
--- smallest of the blood; the plain "watched" and "mercilessly" are how long
--- someone really watched, which only the capture can know, so they are not
--- offered. A card whose box was unticked says the plainest thing, "saw".
+-- The three deeds are explicit player interpretations. They share the
+-- historical row kind names but `written` keeps them separate from automatic
+-- observations. "Saw" uses the smallest stain; targeting duration never
+-- changes a deed or its decoration. An unticked choice defaults to "saw".
 local DEEDS = {
     saw = { kind = "watched", type = WATCHED, watched = 0 },
     tried = { kind = "helped", type = HELPED },
