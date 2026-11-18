@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Shiny new Things
+
+- _Your Diary_ remembers more of your everyday adventures
+  - Profession gains, confirmed help and unfinished dungeon visits find their place
+  - Highlights favour distinct experiences, observed context and your own notes
+
 ### Fixes
 
 - _Your Diary_ now tells the outing shown on its maps

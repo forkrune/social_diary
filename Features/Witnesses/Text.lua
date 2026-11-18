@@ -186,7 +186,7 @@ function Witnesses.Tip(w, now)
             Capital(NUMBER[more] or tostring(more)))
     end
     local at = w.death or w.call
-    lines[#lines + 1] = When(w.t, at and at.level, now)
+    lines[#lines + 1] = When(w.t, (at and at.level) or w.level, now)
     return Who(w.guid) or Witnesses.Name(w), lines
 end
 
@@ -284,4 +284,85 @@ Text.RegisterCaption("witnessed", {
         for i, w in ipairs(left) do sentences[i] = Witnesses.Caption(w) end
         return table.concat(sentences, " ")
     end },
+})
+
+--------------------------------------------------------------------------
+-- Help that stood on its own
+--------------------------------------------------------------------------
+
+-- At most three distinct accounts in the paragraph, favouring different
+-- encounters before another action in the same one. Several healers in one
+-- encounter are one deed with its actual contributors; separate killing
+-- blows never become a shared kill. These limits shorten the words only:
+-- every source row and every mark's tooltip keeps its own evidence.
+local ASSISTANCE_MOST = 3
+function Witnesses.AssistanceSelected(records)
+    local rows, seen = {}, {}
+    for _, rec in ipairs(records or {}) do
+        local w = Witnesses.Card.Assistance(rec)
+        if w and not seen[w.row] then
+            seen[w.row] = true
+            rows[#rows + 1] = w
+        end
+    end
+    table.sort(rows, function(a, b)
+        if a.t ~= b.t then return a.t < b.t end
+        if a.started ~= b.started then return a.started < b.started end
+        if a.guid ~= b.guid then return tostring(a.guid or "") < tostring(b.guid or "") end
+        return tostring(a.action or "") < tostring(b.action or "")
+    end)
+    local groups, by = {}, {}
+    for _, w in ipairs(rows) do
+        local encounter = tostring(w.started) .. ":" .. tostring(w.ended)
+        local key = encounter .. ":" .. w.action
+        if w.action == "kill" then key = key .. ":" .. tostring(w.guid or "") end
+        local group = by[key]
+        if not group then
+            group = { witness = w, encounter = encounter, people = {} }
+            groups[#groups + 1], by[key] = group, group
+        end
+        if not group.people[w.guid or w.row] then
+            group.people[w.guid or w.row] = true
+            if group.witness ~= w then group.witness.others = group.witness.others + 1 end
+        end
+    end
+    local picked, encounters, phrases, count = {}, {}, {}, 0
+    local function Take(i, group)
+        local sentence = Witnesses.Caption(group.witness)
+        if phrases[sentence] then return false end
+        picked[i], phrases[sentence], count = true, true, count + 1
+        return true
+    end
+    for i, group in ipairs(groups) do
+        if count >= ASSISTANCE_MOST then break end
+        if not encounters[group.encounter] and Take(i, group) then encounters[group.encounter] = true end
+    end
+    for i, group in ipairs(groups) do
+        if count >= ASSISTANCE_MOST then break end
+        if not picked[i] then Take(i, group) end
+    end
+    local result = {}
+    for i, group in ipairs(groups) do
+        if picked[i] then result[#result + 1] = group.witness end
+    end
+    return result
+end
+
+function Witnesses.AssistanceLines(e)
+    local words = {}
+    for _, w in ipairs(Witnesses.AssistanceSelected(e.assistance)) do
+        words[#words + 1] = Witnesses.Caption(w)
+    end
+    return words[1] and table.concat(words, " ") or nil
+end
+
+Text.RegisterLines("assisted", { at = 76, run = "combat", lines = Witnesses.AssistanceLines })
+
+-- The action is on the witness card, or its existing coda when that card
+-- has no room. This neutral lead stops a help-only plate falling back to
+-- "On the road", without inventing a close call or an extra story section.
+Text.RegisterCaption("assisted", {
+    moment = "assisted",
+    take = function(m) return Witnesses.Card.Assistance(m.assisted) end,
+    lead = { at = 95, say = function() return L["Help in a fight"] end },
 })

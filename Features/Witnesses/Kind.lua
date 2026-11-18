@@ -84,6 +84,53 @@ function Witnesses.Role(kind, c)
     return (kind == SAVED or kind == AID) and "survived" or "died"
 end
 
+-- Standalone help is a new presentation, so it can require the whole
+-- capture contract rather than a historical kind name. Finalize writes a
+-- positive primary amount and the matching counter; a zero, malformed or
+-- contradictory snapshot cannot become a new headline. This leaves the
+-- compatibility rules of old People rows and written cards unchanged.
+local AID_COUNTER = { heal = "healed", absorb = "absorbed", dispel = "dispelled", kill = "kills" }
+local AID_ORDER = { heal = 1, absorb = 2, dispel = 3, kill = 4 }
+local function Positive(value)
+    return type(value) == "number" and value > 0 and value < math.huge
+end
+function Witnesses.AidEvidence(c)
+    if not (Witnesses.Proven(c) and AID_COUNTER[c.action] and Positive(c.amount)
+        and c[AID_COUNTER[c.action]] == c.amount
+        and type(c.started) == "number" and c.started >= 0
+        and type(c.ended) == "number" and c.ended < math.huge and c.ended >= c.started) then return false end
+    for action, counter in pairs(AID_COUNTER) do
+        local amount = c[counter]
+        if amount ~= nil then
+            if not Positive(amount) or ((action == "dispel" or action == "kill") and amount % 1 ~= 0) then return false end
+            if AID_ORDER[action] < AID_ORDER[c.action] then return false end
+        end
+    end
+    return true
+end
+
+-- Replayed rows for one actor and encounter keep one actual source row.
+-- Use capture's primary-action order, then its recorded counters and stable
+-- scalar detail; never sum two snapshots or let insertion order choose the
+-- action. Every field displayed still comes from the chosen observation.
+function Witnesses.PreferAid(row, before)
+    if not before then return true end
+    local a, b = row.context, before.context
+    if AID_ORDER[a.action] ~= AID_ORDER[b.action] then return AID_ORDER[a.action] < AID_ORDER[b.action] end
+    for _, key in ipairs({ "healed", "absorbed", "dispelled", "kills" }) do
+        if (a[key] or 0) ~= (b[key] or 0) then return (a[key] or 0) > (b[key] or 0) end
+    end
+    for _, key in ipairs({ "npcID", "name", "rank", "meterSession" }) do
+        local av, bv = tostring(a[key] or ""), tostring(b[key] or "")
+        if av ~= bv then return av < bv end
+    end
+    for _, key in ipairs({ "mapID", "x", "y", "myLevel", "instanceID", "zone" }) do
+        local av, bv = tostring(row[key] or ""), tostring(before[key] or "")
+        if av ~= bv then return av < bv end
+    end
+    return false
+end
+
 --------------------------------------------------------------------------
 -- The People rows
 --------------------------------------------------------------------------
@@ -264,6 +311,96 @@ function Witnesses.At(index, t, types)
     end)
     return found
 end
+
+--------------------------------------------------------------------------
+-- Help in a survived fight, with no close call to carry it
+--------------------------------------------------------------------------
+--
+-- The observation already lives on the helper's People row. Reading it
+-- here gives it a place in the owner's story too, without saving a second
+-- copy of another person's identity. Forgetting or pruning the row removes
+-- the derived moment with it. The exact encounter endpoint joins a close
+-- call where one is already on this entry; only an otherwise untold,
+-- attributable contribution by someone outside the group stands alone.
+-- Ordinary party support remains in that person's exchange.
+--
+-- e.assistance holds ephemeral { t, level, mapID, x, y, guid, row }.
+-- Neither the row nor its context is changed. No historical targeting row
+-- is promoted, no health is derived, and a position not recorded on the
+-- row is left for the ordinary route placement (or the prose alone).
+--
+-- A diary member's interaction history is unlimited. Index only eligible
+-- aid once for the read, then each level or sitting reads its time range.
+-- Interactions.Add can append a deferred or backfilled row, so the source
+-- array must never be binary-searched or stopped at an apparently old row.
+-- Sorting these small wrappers leaves every source table in its own order.
+local function AssistanceIndex(j, ctx)
+    local found, by = {}, {}
+    local me = ns.SafeGUID(ctx.me)
+    if not (me and type(ctx.characters) == "table") then return found end
+    local started = j.startedAt or -math.huge
+    for guid, rows in pairs(ctx.interactions or {}) do
+        if ns.SafeGUID(guid) and guid ~= me and ctx.characters[guid] and type(rows) == "table" then
+            for _, row in ipairs(rows) do
+                local c, t = type(row) == "table" and row.context, type(row) == "table" and row.time
+                if type(row) == "table" and row.type == AID and row.me == me and type(t) == "number"
+                    and t >= started and Witnesses.AidEvidence(c) and c.ended == t
+                    and (c.grouped == nil or c.grouped == false) then
+                    local key = guid .. ":" .. c.started .. ":" .. t
+                    local before = by[key]
+                    if Witnesses.PreferAid(row, before and before.row) then
+                        by[key] = { t = t, level = row.myLevel, mapID = row.mapID,
+                            x = row.x, y = row.y, guid = guid, row = row }
+                    end
+                end
+            end
+        end
+    end
+    for _, rec in pairs(by) do found[#found + 1] = rec end
+    table.sort(found, function(x, y)
+        if x.t ~= y.t then return x.t < y.t end
+        if x.guid ~= y.guid then return x.guid < y.guid end
+        return x.row.context.started < y.row.context.started
+    end)
+    return found
+end
+
+local function Assistance(j, a, b, e, ctx, prepared)
+    local index = prepared or AssistanceIndex(j, ctx or {})
+    local carried = {}
+    for _, call in ipairs(e.closeCalls or {}) do
+        if not call.customOf then carried[call.t] = true end
+    end
+    -- The first eligible observation at or after this entry's lower bound.
+    -- A binary search is safe on this sorted, per-read index only.
+    local lo, hi = 1, #index + 1
+    while lo < hi do
+        local mid = math.floor((lo + hi) / 2)
+        if index[mid].t < a then lo = mid + 1 else hi = mid end
+    end
+    local found = {}
+    for i = lo, #index do
+        local rec = index[i]
+        if rec.t >= b then break end
+        if not carried[rec.t] then found[#found + 1] = rec end
+    end
+    e.assistance = found
+end
+
+ns.JourneyRecap.RegisterMoment("assisted", { order = 26, entry = "assistance", field = "assisted", rank = 2,
+    prepare = AssistanceIndex,
+    gather = Assistance,
+    moment = function(j, rec, Own)
+        local map, x, y = Own(j, rec.mapID, rec.x, rec.y, rec.t)
+        return { kind = "assisted", t = rec.t, guid = rec.guid, assisted = rec }, map, x, y
+    end,
+    selection = function(m)
+        local c = m.assisted.row.context
+        return { family = "assistance", context = "linked",
+            -- Several contributors to the same encounter are one event,
+            -- not a bigger story merely because it has more faces.
+            event = "assistance:" .. m.assisted.row.me .. ":" .. c.started .. ":" .. c.ended }
+    end })
 
 --------------------------------------------------------------------------
 -- A witness the player writes in (.claude/features/custom-cards.md)

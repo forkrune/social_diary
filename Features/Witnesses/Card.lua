@@ -845,7 +845,22 @@ local CLOSE_WITNESS = { [Witnesses.SAVED] = true, [Witnesses.AID] = true }
 local PROOF_FIELDS = { "evidence", "method", "action", "started", "ended", "meterSession", "amount",
     "healed", "absorbed", "dispelled", "kills" }
 
-function WitnessCard.Choose(crosses, marks, index, onPage)
+-- Successful assistance has a moment of its own even when no death or close
+-- call exists. Its card is the existing witness slip, carrying only the proof
+-- in the source row: no manufactured call, death, health or rescue claim.
+function WitnessCard.Assistance(rec, mark)
+    local row = rec and rec.row
+    local c = row and row.context
+    if not (row and row.type == Witnesses.AID and Witnesses.AidEvidence(c)
+        and c.grouped ~= true and rec.t == c.ended) then return nil end
+    local w = { kind = "helped", type = row.type, guid = rec.guid, row = row, t = rec.t,
+        level = rec.level, others = 0, assisted = rec, mark = mark,
+        creature = type(c.name) == "string" and { npcID = c.npcID, name = c.name, rank = c.rank } or nil }
+    for _, key in ipairs(PROOF_FIELDS) do w[key] = c[key] end
+    return w
+end
+
+function WitnessCard.Choose(crosses, marks, index, onPage, aidMarks)
     local Get = ns.Rows.Get
     local best
     local function Consider(found, extra)
@@ -864,7 +879,7 @@ function WitnessCard.Choose(crosses, marks, index, onPage)
             elseif (c.watched or 0) ~= (best.watched or 0) then
                 better = (c.watched or 0) > (best.watched or 0)
             else
-                better = w.t > best.t
+                better = w.t > best.t or (w.t == best.t and tostring(w.guid or "") < tostring(best.guid or ""))
             end
         end
         if not better then return end
@@ -896,8 +911,44 @@ function WitnessCard.Choose(crosses, marks, index, onPage)
             end
         end
     end
+    for _, mark in ipairs(aidMarks or {}) do
+        -- One observed fight may have several contributors. Group only exact
+        -- encounter bounds, never every person whose mark is on this spot;
+        -- two fights at the same camp still remain two accounts.
+        local groups, order = {}, {}
+        for _, m in ipairs(mark.list or {}) do
+            local rec = m.assisted
+            local w = WitnessCard.Assistance(rec, mark.at)
+            if w then
+                local key = tostring(w.started) .. ":" .. tostring(w.ended)
+                if not groups[key] then groups[key] = {}; order[#order + 1] = groups[key] end
+                local found = groups[key]
+                found[#found + 1] = { guid = w.guid, row = w.row, t = w.t, rec = rec }
+            end
+        end
+        for _, found in ipairs(order) do
+            table.sort(found, function(a, b) return tostring(a.guid or "") < tostring(b.guid or "") end)
+            local rec = found[1].rec
+            Consider(found, { assisted = rec, level = rec.level, mark = mark.at })
+        end
+    end
     return best
 end
+
+-- The ordinary together ring marks attributable help. It is not a death
+-- cross and does not join the person's session marks, which would make a
+-- second generic companion strip beside the precise action on this card.
+local Plate = ns.UI.JourneyPlate
+Plate.RegisterMark("assisted", {
+    order = 35, cap = 20, count = "assistance",
+    radius = Plate.MARK.together / 2 + 1, halo = Plate.MARK.together + 4,
+    tip = function(m, now)
+        local w = WitnessCard.Assistance(m.assisted)
+        if w then return Witnesses.Tip(w, now) end
+    end,
+    keep = "assistanceMarks",
+    draw = function(kit, x, y) Plate.SHAPE.session(kit, x, y) end,
+})
 
 -- Someone observed goes before the creature (ns.UI.JourneyPlate's
 -- RegisterPass, after the marks): a death's candidate takes the killer
@@ -912,7 +963,7 @@ ns.UI.JourneyPlate.RegisterPass("witness", {
     order = 30,
     draw = function(plate, c)
         local witnesses = c.opts.witnesses or ns.Journey.WitnessIndex()
-        plate.witness = WitnessCard.Choose(c.crosses, plate.closeMarks, witnesses, c.OnPage)
+        plate.witness = WitnessCard.Choose(c.crosses, plate.closeMarks, witnesses, c.OnPage, plate.assistanceMarks)
         if plate.witness and plate.witness.death then plate.killer = nil end
         if plate.witness and plate.witness.call then plate.foe = nil end
     end,

@@ -244,6 +244,7 @@ ns.Locale.Add("deDE", {
     ["saved you##line"] = "hat dich gerettet",
     ["tried to save you##line"] = "hat versucht, dich zu retten",
     ["saw you die"] = "hat dich sterben sehen",
+    ["Help in a fight"] = "Hilfe in einem Kampf",
     ["saved you"] = "hat dich gerettet",
     ["tried to save you"] = "hat versucht, dich zu retten",
     ["from %s##witness"] = "gegen %s",

@@ -177,6 +177,8 @@ ns.Locale.Add("frFR", {
     ["yours at last"] = "à toi, enfin",
     ["someone's"] = "de quelqu’un",
     ["we fell twice"] = "le groupe est tombé deux fois",
+    ["you fell twice"] = "<you:tu es tombé/tu es tombée> deux fois",
+    ["you fell once|you fell %s times##plural"] = "<you:tu es tombé/tu es tombée> une fois|<you:tu es tombé/tu es tombée> %s fois|<you:tu es tombé/tu es tombée> %s fois",
     ["we fell once|we fell %s times##plural"] = "le groupe est tombé une fois|le groupe est tombé %s fois|le groupe est tombé %s fois",
     ["%s twice"] = "%s deux fois",
     ["%s thrice"] = "%s trois fois",

@@ -411,6 +411,8 @@ ns.Locale.Add("enUS", {
     ["%1$s reached %2$s."] = "%1$s reached %2$s.",
     ["%s profession at its cap|%s professions at their cap##plural"] = "%s profession at its cap|%s professions at their cap",
     ["%1$s, then %2$s"] = "%1$s, then %2$s",
+    ["%1$s from %2$d to %3$d"] = "%1$s from %2$d to %3$d",
+    ["%1$s went from %2$d to %3$d."] = "%1$s went from %2$d to %3$d.",
     -- Features/QuestFinales/Text.lua
     ["a quest"] = "a quest",
     ["a day|%s days##plural"] = "a day|%s days",
@@ -563,6 +565,7 @@ ns.Locale.Add("enUS", {
     ["And more besides"] = "And more besides",
     ["Others were there too"] = "Others were there too",
     ["%s witness|%s witnesses##plural"] = "%s witness|%s witnesses",
+    ["Help in a fight"] = "Help in a fight",
     -- Features/WorldPvP/Kind.lua
     ["{You} killed %1$s %2$s##zone"] = "{You} killed %1$s %2$s",
     ["{You} killed %s"] = "{You} killed %s",
@@ -1200,6 +1203,8 @@ ns.Locale.Add("enUS", {
     ["yours"] = "yours",
     ["yours at last"] = "yours at last",
     ["someone's"] = "someone's",
+    ["you fell twice"] = "you fell twice",
+    ["you fell once|you fell %s times##plural"] = "you fell once|you fell %s times",
     ["we fell twice"] = "we fell twice",
     ["we fell once|we fell %s times##plural"] = "we fell once|we fell %s times",
     ["%s twice"] = "%s twice",

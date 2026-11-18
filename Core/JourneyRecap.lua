@@ -38,12 +38,13 @@ local HINDSIGHT = { slack = 120, encounter = 30 * 60 }
 
 -- JRN-21: at most `max` plates an entry. A window fits its moments when
 -- they span no more than `inset` of it, so no mark sits on the plate's
--- edge (`window` stands in when a map's art gives none). Rank decides
--- which places win (Decision 10): people, deaths, the features' own kinds
--- where they rank themselves, a zone new to the road, a dungeon's door, the
--- longest stays (one a zone), the longest road when there was nothing
--- else, and last the level-up spot: a level is reached anyway, so a place
--- is worth a plate for what happened there, not for the ding (12 Oct).
+-- edge (`window` stands in when a map's art gives none). Rank decides the
+-- grouping and breaks selection ties (Decision 10); the authored choices,
+-- observed context and coverage of different occurrences lead the final
+-- choice (ChoosePlates below). The longest stays still offer one a zone,
+-- the longest road when there was nothing else, and last the level-up
+-- spot: a level is reached anyway, so a place is worth a plate for what
+-- happened there, not for the ding (12 Oct).
 -- Ranks are only ever compared, never counted, so a feature's kind may
 -- slot in between two with a fraction, moving nothing else.
 local PLATES = { max = 3, inset = 0.8, window = 0.3 }
@@ -81,15 +82,34 @@ Recap.DOOR_ONLY = DOOR_ONLY
 --   entry   the entry's field its records are gathered into (e[entry])
 --   list    the route's list they come from (Core/Journey.lua's
 --           RegisterList): those within the entry's time are gathered
---   gather  function(j, a, b, e, ctx), instead of `list`: fills e[entry]
+--   prepare function(j, ctx) → data, optional read-only preparation for
+--           this read. Build and Pieces prepare once before their several
+--           gathers; a direct Gather prepares for itself. The context is a
+--           shallow copy, never the caller's table or a saved store. Data
+--           belongs to this read only: no feature index outlives its sources.
+--   gather  function(j, a, b, e, ctx, data), instead of `list`: fills e[entry]
 --           (and any other entry it shares a list with: one list may make
 --           two kinds, the second's gather doing nothing, its entry filled
---           by the first's, which comes first in `order`) itself
+--           by the first's, which comes first in `order`) itself. `data` is
+--           this kind's prepare result, nil when it has no preparation.
 --   field   the moment's field that holds its record (m.call)
 --   rank    its RANK (see above); `light` true makes it a light kind
 --   rankAs  function(m): the RANK key a moment of it ranks as, where it is
 --           not its kind (one that is someone's too may rank with the
 --           people: "session")
+--   selection function(m) → { family, event, context }, optional evidence
+--           for choosing among crowded places. `family` groups related
+--           kinds; `event` identifies one occurrence, shared by every
+--           mark of it (a source table, or a globally unique scalar key).
+--           Neither is a memory score. `context` is "linked" for explicitly
+--           connected observations, "first" for a first in captured history,
+--           "return" for a recorded encounter renewed, or "repeated" for
+--           at least two distinct measured occurrences. These have equal
+--           priority; their predicates belong to the feature. Timing alone
+--           is no link, and a repeated sample is no second occurrence.
+--           Unknown contexts are ignored. Without a descriptor the kind,
+--           its source record and its existing rank are enough. This changes
+--           selection only, never the record or its words.
 --   moment  function(j, rec, Own) → moment, mapID, x, y: instead of the
 --           record placed at its own spot (Own) as { kind, t, [field] }.
 --           A moment that is someone's too (its `guid`: something they
@@ -123,6 +143,27 @@ function Recap.RegisterMoment(kind, spec)
     return spec
 end
 
+-- A private marker, carried only by the context copy for one synchronous
+-- read. Reusing the caller's raw context later always prepares afresh, even
+-- when its nested stores have changed in place. No saved source is sorted,
+-- amended or stamped to make an index, and no global cache needs to guess
+-- whether an old row was removed, backfilled or forgotten.
+local PREPARED = {}
+local function Prepare(j, ctx)
+    ctx = ctx or {}
+    local existing = rawget(ctx, PREPARED)
+    if existing and existing.j == j then return ctx, existing.data end
+    local copy, prepared = {}, { j = j, data = {} }
+    for key, value in pairs(ctx) do
+        if key ~= PREPARED then copy[key] = value end
+    end
+    copy[PREPARED] = prepared
+    for _, spec in ipairs(MOMENTS) do
+        if spec.prepare then prepared.data[spec] = spec.prepare(j, copy) end
+    end
+    return copy, prepared.data
+end
+
 -- Above everything, people included (1): a card the player just wrote or
 -- changed has to be on the page, and a plate with a better moment would
 -- otherwise push it off (PLATES.max).
@@ -137,6 +178,42 @@ local function Rank(m)
     return RANK[spec and spec.rankAs and spec.rankAs(m) or m.kind] or 9
 end
 Recap.Rank = Rank
+
+-- The built-in moments' sources. A group contributes one occurrence, not
+-- one per face on its plate; a note about several people is still one thing
+-- the player wrote. Features supply their own source through `field` above.
+local SOURCE = { session = "session", fight = "mark", note = "note", first = "first",
+    death = "seg", arrive = "seg", dungeon = "seg", stay = "seg", road = "seg" }
+local CONTEXT = { linked = true, first = true, ["return"] = true, repeated = true }
+
+local function Source(m)
+    local spec = MOMENT[m.kind]
+    local field = spec and spec.field or SOURCE[m.kind]
+    return field and m[field]
+end
+
+-- Read-only selection evidence for a moment. Built-in moments may carry a
+-- private, derived descriptor from Moments; feature kinds own theirs in the
+-- registry. Authored cards and notes are the player's choice, irrespective
+-- of any automatic descriptor. A source table is an identity key only: its
+-- address never decides which place wins or where it appears on the page.
+function Recap.Selection(m)
+    local spec = MOMENT[m.kind]
+    local rec = Source(m)
+    local d = spec and spec.selection and spec.selection(m) or m.selection
+    if type(d) ~= "table" then d = {} end
+    local event = d.event
+    if type(event) ~= "table" and type(event) ~= "string" and type(event) ~= "number" then
+        event = rec and (rec.customOf or rec) or m
+    end
+    return {
+        family = type(d.family) == "string" and d.family ~= "" and d.family or m.kind,
+        event = event,
+        context = CONTEXT[d.context] and d.context or nil,
+        authored = m.kind == "note" or (rec and rec.customOf ~= nil) or false,
+        substantive = Rank(m) < RANK.stay,
+    }
+end
 
 --------------------------------------------------------------------------
 -- Time
@@ -219,6 +296,8 @@ end
 -- time in each, the longest stops in the order made, dungeons, flights, who you were with,
 -- fights and notes.
 local function Gather(j, a, b, ctx)
+    local prepared
+    ctx, prepared = Prepare(j, ctx)
     local e = { from = a, to = b, places = {}, stops = {}, dungeons = {}, flights = {},
         people = {}, fights = {}, notes = {}, deaths = {}, roads = {}, hidden = {}, seconds = 0 }
     for _, spec in ipairs(MOMENTS) do e[spec.entry] = {} end
@@ -308,7 +387,7 @@ local function Gather(j, a, b, ctx)
     -- The features' (RegisterMoment): within the entry's time, oldest first.
     for _, spec in ipairs(MOMENTS) do
         if spec.gather then
-            spec.gather(j, a, b, e, ctx)
+            spec.gather(j, a, b, e, ctx, prepared[spec])
         elseif spec.list then
             local into = e[spec.entry]
             for _, rec in ipairs(Journey.List(j, spec.list)) do
@@ -372,6 +451,7 @@ end
 -- `ctx`: now, level (the character's now), maxLevel, sessions (theirs),
 -- notes (theirs), visits (theirs).
 function Recap.Build(j, ctx)
+    ctx = Prepare(j, ctx)
     local now = ctx.now or ns.Now()
     local maxLevel = ctx.maxLevel or Journey.MaxLevel()
     local first = j.startLevel or 1
@@ -514,13 +594,17 @@ Recap.SLIVER = SLIVER
 local DAY_TURNS = 5
 Recap.DAY_TURNS = DAY_TURNS
 
--- A run earns a page of its own with a boss killed, or a kill only its loot
--- told of (the user, 28 Oct). Anything less is the ledger's line and the
--- door's plate.
+-- A visit can be a story before its first boss dies. An authored route,
+-- a completed attempt, a recorded death or ten measured minutes inside
+-- earn the same page as a kill. Group membership alone still says little:
+-- a brief look through the door stays on the road's plate. Only closed
+-- spans count here; an old visit without spans cannot turn time
+-- spent outside into time inside. Nothing infers why the visit ended.
+local RUN_INSIDE = 10 * 60
 function Recap.RunWorthy(visit)
     if not visit then return false end
-    if visit.bossesKilled and #visit.bossesKilled > 0 then return true end
-    return type(visit.inferred) == "table" and next(visit.inferred) ~= nil
+    if ns.Instances.HasMoments(visit) then return true end
+    return ns.Instances.ObservedInside(visit) >= RUN_INSIDE
 end
 
 -- The runs begun in [a, b) that earned a page, oldest first.
@@ -561,6 +645,7 @@ function Recap.Pieces(j, e, ctx)
     e.pieces, e.spliced = pieces, true
     local a, b = e.from, e.to
     if not (a and b and b > a) or (e.kind == "level" and not e.known) then return pieces end
+    ctx = Prepare(j, ctx)
 
     local sittings = ns.Sittings.List(j)
     local perDay = {}
@@ -995,6 +1080,32 @@ function Recap.Moments(j, e, ctx)
         list[#list + 1] = m
     end
 
+    -- A return needs two recorded meetings. Legacy sessions still draw as
+    -- they always did, but missing proximity is not new evidence that the
+    -- people met. Only completed, explicitly near stretches establish the
+    -- earlier encounter; the current one must be near inside this entry.
+    -- The earliest completed encounter per person is enough, independent
+    -- of the order in which the caller supplied its sessions.
+    local function WasNear(near, a, b)
+        for _, stretch in ipairs(near or {}) do
+            if math.min(stretch[2], b) > math.max(stretch[1], a) then return true end
+        end
+        return false
+    end
+    local earlier = {}
+    for _, session in ipairs(ctx.sessions or {}) do
+        if session.endedAt and session.endedAt > session.startedAt then
+            local me = session.me or ctx.me or false
+            earlier[me] = earlier[me] or {}
+            for guid, p in pairs(session.participants or {}) do
+                if WasNear(ns.Sessions.NearStretches(session, p), session.startedAt, session.endedAt) then
+                    local last = earlier[me][guid]
+                    if not last or session.endedAt < last then earlier[me][guid] = session.endedAt end
+                end
+            end
+        end
+    end
+
     for _, session in ipairs(ctx.sessions or {}) do
         local s1 = session.startedAt
         local s2 = session.endedAt or ns.Sessions.LastTogether(session)
@@ -1018,14 +1129,23 @@ function Recap.Moments(j, e, ctx)
                 local near = ns.Sessions.NearStretches(session, p)
                 local pm, px, py, pt = map, x, y, t
                 if near then pm, px, py, pt = Recap.SettleNear(j, near, a, math.max(a, b)) end
+                local previous = earlier[session.me or ctx.me or false]
+                local returned = previous and previous[guid] and previous[guid] <= s1 and WasNear(near, a, b)
                 Add({ kind = "session", guid = guid, t = pt or a, session = session,
-                    seconds = (p.seconds or 0) * share }, pm, px, py)
+                    seconds = (p.seconds or 0) * share,
+                    selection = returned and { context = "return" } or nil }, pm, px, py)
             end
         end
     end
     for _, mark in ipairs(e.fights or {}) do
         local map, x, y = Own(j, mark.mapID, mark.x, mark.y, mark.t)
-        Add({ kind = "fight", guid = mark.guid, outcome = mark.outcome, t = mark.t, mark = mark }, map, x, y)
+        -- The route records these two outcomes explicitly. Several wins
+        -- should not erase a later loss to the same opponent (or the other
+        -- way round), but their order alone establishes no revenge or
+        -- recovery. An unknown older value stays the ordinary fight kind.
+        local family = (mark.outcome == "won" or mark.outcome == "lost") and "fight:" .. mark.outcome
+        Add({ kind = "fight", guid = mark.guid, outcome = mark.outcome, t = mark.t, mark = mark,
+            selection = family and { family = family } or nil }, map, x, y)
     end
     for _, note in ipairs(e.notes or {}) do
         local map, x, y = Own(j, note.mapID, note.x, note.y, note.time)
@@ -1034,7 +1154,8 @@ function Recap.Moments(j, e, ctx)
         end
     end
     for _, f in ipairs(e.hindsight or {}) do
-        Add({ kind = "first", guid = f.guid, t = f.t, metLevel = f.metLevel, first = f }, f.mapID, f.x, f.y)
+        Add({ kind = "first", guid = f.guid, t = f.t, metLevel = f.metLevel, first = f,
+            selection = { context = "first" } }, f.mapID, f.x, f.y)
     end
     if e.reached and e.reached.mapID then
         Add({ kind = "level", level = e.level, t = e.reached.at }, e.reached.mapID, e.reached.x, e.reached.y)
@@ -1045,7 +1166,12 @@ function Recap.Moments(j, e, ctx)
     end
     for _, seg in ipairs(e.deaths or {}) do
         local map, x, y = Journey.PointIn(seg, (seg.from + seg.to) / 2)
-        Add({ kind = "death", t = seg.from, seg = seg }, map, x, y)
+        -- An aggregate crossing this entry's edge cannot establish how many
+        -- of its deaths happened on this page. Keep its existing cross, but
+        -- only prefer the repeated setback when the whole observation fits.
+        local repeated = seg.from >= e.from and seg.to <= e.to and (seg.act and seg.act.deaths or 0) >= 2
+        Add({ kind = "death", t = seg.from, seg = seg,
+            selection = repeated and { context = "repeated" } or nil }, map, x, y)
     end
     -- The features' (RegisterMoment), each record where it happened.
     for _, spec in ipairs(MOMENTS) do
@@ -1105,24 +1231,136 @@ function Recap.Holds(plate, w, h)
     return plate.x1 - plate.x0 <= w * PLATES.inset and plate.y1 - plate.y0 <= h * PLATES.inset
 end
 
+-- Equal-time moments used to inherit pairs()' order through a session's
+-- participants. That order could change the spatial grouping. Stable scalar
+-- fields distinguish the observed facts without sorting on table addresses,
+-- names resolved later, or any private interpretation of their importance.
+local function ScalarKey(record)
+    local fields = {}
+    for key, value in pairs(record or {}) do
+        local kind = type(value)
+        if type(key) == "string" and (kind == "string" or kind == "number" or kind == "boolean") then
+            fields[#fields + 1] = key
+        end
+    end
+    table.sort(fields)
+    local parts = {}
+    for _, key in ipairs(fields) do
+        local value = tostring(record[key])
+        parts[#parts + 1] = key .. ":" .. type(record[key]) .. ":" .. #value .. ":" .. value
+    end
+    return table.concat(parts, "\031")
+end
+
+local function PlateBefore(a, b)
+    for _, key in ipairs({ "t", "mapID", "x0", "y0", "x1", "y1" }) do
+        if a[key] ~= b[key] then return a[key] < b[key] end
+    end
+    return false
+end
+
+-- Summarise what a place can actually show. Faces, a first and an upgrade
+-- can be several marks of one occurrence; neither the number of people in
+-- a party nor filler pins should win a tie by making the page look busy.
+-- These sets are computed for this read and never stored in the diary.
+local function SelectionOf(plate, selections)
+    local s = { authored = false, contextual = false, substantive = false,
+        families = {}, actors = {}, events = {}, occurrences = 0 }
+    for _, m in ipairs(plate.moments) do
+        local d = selections[m]
+        s.authored = s.authored or d.authored
+        s.substantive = s.substantive or d.substantive
+        s.contextual = s.contextual or (d.substantive and d.context ~= nil)
+        if d.substantive or d.authored then
+            s.families[d.family] = true
+            if m.guid then s.actors[m.guid] = true end
+            if not s.events[d.event] then
+                s.events[d.event] = true
+                s.occurrences = s.occurrences + 1
+            end
+        end
+    end
+    return s
+end
+
+local function Unshown(values, shown)
+    for key in pairs(values) do if not shown[key] then return true end end
+    return false
+end
+
+-- A bounded choice, not a prediction of what the player will remember.
+-- Authorship comes first. An occurrence already represented through another
+-- participant does not crowd out a fresh one, nor does a run of contextual
+-- encounters crowd out every other kind of substantive experience. Context
+-- leads the first choice and breaks ties within that coverage; it is not a
+-- license for one family to take the whole page. This is no quota: when only
+-- one kind happened, its other encounters still fill the page. An unseen
+-- person or zone breaks an equal rank's tie, so repetition does not erase
+-- a different journey or company.
+-- A quiet stop remains a valid fallback, never an obligatory highlight that
+-- displaces a substantive observation. Display order is chronological after
+-- this choice, and all source moments remain available on the full map.
+local function ChoosePlates(plates, selections)
+    local chosen, events, families, actors, maps = {}, {}, {}, {}, {}
+    for _, plate in ipairs(plates) do plate.selection = SelectionOf(plate, selections) end
+    local function Before(a, b)
+        local sa, sb = a.selection, b.selection
+        if sa.authored ~= sb.authored then return sa.authored end
+        if sa.substantive ~= sb.substantive then return sa.substantive end
+        local ea, eb = Unshown(sa.events, events), Unshown(sb.events, events)
+        if ea ~= eb then return ea end
+        local fa, fb = Unshown(sa.families, families), Unshown(sb.families, families)
+        if fa ~= fb then return fa end
+        if sa.contextual ~= sb.contextual then return sa.contextual end
+        if a.rank ~= b.rank then return a.rank < b.rank end
+        local aa, ab = Unshown(sa.actors, actors), Unshown(sb.actors, actors)
+        if aa ~= ab then return aa end
+        local ma, mb = not maps[a.mapID], not maps[b.mapID]
+        if ma ~= mb then return ma end
+        if sa.occurrences ~= sb.occurrences then return sa.occurrences > sb.occurrences end
+        return PlateBefore(a, b)
+    end
+    while #chosen < PLATES.max and #plates > 0 do
+        local best = 1
+        for i = 2, #plates do if Before(plates[i], plates[best]) then best = i end end
+        local plate = table.remove(plates, best)
+        chosen[#chosen + 1] = plate
+        for event in pairs(plate.selection.events) do events[event] = true end
+        for family in pairs(plate.selection.families) do families[family] = true end
+        for guid in pairs(plate.selection.actors) do actors[guid] = true end
+        maps[plate.mapID] = true
+    end
+    return chosen
+end
+
 -- JRN-21 (Decisions 2, 3, 10): the places `e` is remembered by, at most
 -- PLATES.max, oldest first. A plate is a place, not an event: moments go
 -- into the first plate whose window they fit, most important first, so a
--- level spent on one hillside is one plate. The places with the best
--- moments win; ties go to the busier, then the earlier. `cover(mapID)` is
+-- level spent on one hillside is one plate. Authored and contextual moments
+-- lead the choice, with room for different observed experiences (ChoosePlates)
+-- instead of a count of every face and pin. `cover(mapID)` is
 -- the plate's window on that map in 0..1 units (w, h), from the art: the
 -- UI's to know, a constant in the tests. Each plate: { mapID, cx, cy, t,
 -- rank, moments, light }, its moments in time order, `light` when every
 -- one of them is a LIGHT kind.
 function Recap.Plates(j, e, ctx, cover)
     local moments = Recap.Moments(j, e, ctx or {})
+    local selections, keys = {}, {}
+    for _, m in ipairs(moments) do
+        selections[m] = Recap.Selection(m)
+        keys[m] = ScalarKey(m) .. "\030" .. ScalarKey(Source(m))
+    end
+    local function ByMomentTime(a, b)
+        if a.t ~= b.t then return a.t < b.t end
+        return keys[a] < keys[b]
+    end
     -- A level's pins rank last, so they are placed after everything else:
     -- one joins the plate of whatever happened where it was reached, and
     -- never stretches a plate's box before a moment that matters is in.
     table.sort(moments, function(a, b)
         local ra, rb = Rank(a), Rank(b)
         if ra ~= rb then return ra < rb end
-        return a.t < b.t
+        return ByMomentTime(a, b)
     end)
     local plates = {}
     for _, m in ipairs(moments) do
@@ -1165,26 +1403,21 @@ function Recap.Plates(j, e, ctx, cover)
         local doorOnly, recorded = true, false
         for _, m in ipairs(plates[i].moments) do
             if m.kind == "dungeon" then
-                recorded = recorded or m.visit ~= nil
+                recorded = recorded or Recap.RunWorthy(m.visit)
             elseif not DOOR_ONLY[m.kind] then
                 doorOnly = false
             end
         end
         if doorOnly and recorded then table.remove(plates, i) end
     end
-    table.sort(plates, function(a, b)
-        if a.rank ~= b.rank then return a.rank < b.rank end
-        if #a.moments ~= #b.moments then return #a.moments > #b.moments end
-        return a.t < b.t
-    end)
-    for i = #plates, PLATES.max + 1, -1 do plates[i] = nil end
+    plates = ChoosePlates(plates, selections)
     for _, plate in ipairs(plates) do
         plate.cx, plate.cy = (plate.x0 + plate.x1) / 2, (plate.y0 + plate.y1) / 2
-        table.sort(plate.moments, ByTime)
+        table.sort(plate.moments, ByMomentTime)
         plate.light = true
         for _, m in ipairs(plate.moments) do plate.light = plate.light and LIGHT[m.kind] == true end
     end
-    table.sort(plates, ByTime)
+    table.sort(plates, PlateBefore)
     return plates
 end
 

@@ -29,7 +29,10 @@ Section("what counts as reaching a cap")
 
 local Is = P.IsCap
 Check(Is({ rank = 74, max = 75 }, { rank = 75, max = 75 }), "74 to 75 of 75")
-Check(Is({ rank = 70, max = 75 }, { rank = 76, max = 75 }), "a climb past the max was not taken for a cap")
+Check(not Is({ rank = 70, max = 75 }, { rank = 76, max = 75 }), "an inconsistent rank above the maximum became a cap")
+Check(not Is({ rank = 74.5, max = 75 }, { rank = 75, max = 75 }), "a fractional baseline became a cap")
+Check(not Is({ rank = 74, max = 75 }, { rank = math.huge, max = 75 }), "an infinite reading became a cap")
+Check(not Is({ rank = 74, max = 75 }, { rank = 0 / 0, max = 75 }), "an unreadable numeric reading became a cap")
 Check(not Is({ rank = 75, max = 75 }, { rank = 75, max = 150 }), "training was taken for a cap")
 Check(not Is({ rank = 75, max = 75 }, { rank = 75, max = 75 }), "staying at the cap was taken for reaching it")
 Check(not Is({ rank = 0, max = 0 }, { rank = 75, max = 75 }), "a reading not yet loaded was taken for a climb")

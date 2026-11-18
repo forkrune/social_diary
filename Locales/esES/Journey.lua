@@ -177,6 +177,8 @@ ns.Locale.Add("esES", {
     ["yours at last"] = "tuyo, por fin",
     ["someone's"] = "de alguien",
     ["we fell twice"] = "caímos dos veces",
+    ["you fell twice"] = "caíste dos veces",
+    ["you fell once|you fell %s times##plural"] = "caíste una vez|caíste %s veces",
     ["we fell once|we fell %s times##plural"] = "caímos una vez|caímos %s veces",
     ["%s twice"] = "%s dos veces",
     ["%s thrice"] = "%s tres veces",

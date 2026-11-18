@@ -65,7 +65,11 @@ end
 
 -- The fallen note's first line: "we fell once", "we fell twice", "we fell
 -- six times".
-function Text.RunFell(n)
+function Text.RunFell(n, solo)
+    if solo then
+        if n == 2 then return L["you fell twice"] end
+        return ns.Plural(n, L["you fell once|you fell %s times##plural"], Said(n))
+    end
     if n == 2 then return L["we fell twice"] end
     return ns.Plural(n, L["we fell once|we fell %s times##plural"], Said(n))
 end

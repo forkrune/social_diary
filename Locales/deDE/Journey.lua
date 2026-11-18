@@ -188,6 +188,8 @@ ns.Locale.Add("deDE", {
     ["yours at last"] = "endlich deins",
     ["someone's"] = "von jemandem",
     ["we fell twice"] = "wir fielen zweimal",
+    ["you fell twice"] = "du fielst zweimal",
+    ["you fell once|you fell %s times##plural"] = "du fielst einmal|du fielst %s Mal",
     ["we fell once|we fell %s times##plural"] = "wir fielen einmal|wir fielen %smal",
     ["%s twice"] = "%s zweimal",
     ["%s thrice"] = "%s dreimal",
