@@ -2,11 +2,15 @@
 
 ## [Unreleased]
 
+## [4.2.0-alpha.1]
+
+This alpha update brings more of your everyday adventures into _Your Diary_, with more precise accounts of who watched and who helped. These changes have not yet been checked in the game.
+
 ### Shiny new Things
 
 - _Your Diary_ remembers more of your everyday adventures
   - Profession gains, confirmed help and unfinished dungeon visits find their place
-  - Highlights favour distinct experiences, observed context and your own notes
+  - Highlights favour distinct experiences and the notes you write
 
 ### Fixes
 

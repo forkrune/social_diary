@@ -1,12 +1,5 @@
-# Packages a release when a version tag is pushed:
-#
-#   git tag v1.0.0 && git push origin v1.0.0
-#
-# The tag must match the TOC's ## Version line. Tests run first; the zip
-# (without Dev/, tests/ and the rest .pkgmeta ignores) lands on a GitHub
-# release with CHANGELOG.md as its notes. CurseForge or Wago uploads need
-# their project id in the TOC and an API token secret, see
-# https://github.com/BigWigsMods/packager.
+# Tags from main publish tested, verified packages to this fork's GitHub
+# Releases. X.Y.Z-alpha.N / X.Y.Z-beta.N versions are marked prerelease.
 
 name: Release
 
@@ -15,36 +8,94 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Tag matches the TOC version
+      - name: Validate the release tag and source
         run: |
-          toc=$(sed -n 's/^## Version: *//p' social_diary.toc | tr -d '\r')
-          if [ "v$toc" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match ## Version: $toc in social_diary.toc"
-            exit 1
-          fi
+          git merge-base --is-ancestor HEAD origin/main
+          python3 Dev/ci/package.py prepare tag
 
       - name: Install LuaJIT
         run: sudo apt-get update && sudo apt-get install -y luajit
 
-      - name: Run tests
-        run: luajit tests/run.lua
+      - name: Check packaging and locale generation
+        run: |
+          python3 -m unittest discover -s Dev/ci -p 'test_*.py'
+          luajit Dev/Locale/extract.lua --check
+
+      - name: Run every registered test in a fresh process
+        run: bash Dev/ci/test.sh
 
   package:
     needs: test
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
-    env:
-      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: BigWigsMods/packager@v2
+      - name: Stamp release provenance
+        run: python3 Dev/ci/package.py prepare tag
+
+      - name: Package without publishing
+        uses: BigWigsMods/packager@01e8631a69c69d7654c788d152630d5fed9e3812 # v2
+        with:
+          args: -d -p 0 -w 0 -a 0 -n "{package-name}-{project-version}"
+
+      - name: Verify the installable ZIP and write checksums
+        run: python3 Dev/ci/package.py verify tag
+
+      - name: Publish the complete GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=false
+          latest=true
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            prerelease=true
+            latest=false
+          fi
+
+          remote_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq '.sha')
+          if [[ "$remote_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::The release tag moved after this workflow started. Nothing was published."
+            exit 1
+          fi
+
+          # Recover an interrupted draft, but never replace a published build.
+          if draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft'); then
+            if [[ "$draft" != true ]]; then
+              echo "::error::This tag is already published. Keep its assets immutable; use a new tag for another build."
+              exit 1
+            fi
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft \
+              --title "$GITHUB_REF_NAME" --notes-file CHANGELOG.md \
+              --prerelease="$prerelease" --latest="$latest"
+          fi
+
+          gh release upload "$GITHUB_REF_NAME" .release/*.zip \
+            .release/SHA256SUMS .release/BUILD-INFO.json --clobber
+          gh release edit "$GITHUB_REF_NAME" --verify-tag --draft=false \
+            --title "$GITHUB_REF_NAME" --notes-file CHANGELOG.md \
+            --prerelease="$prerelease" --latest="$latest"
+          gh release view "$GITHUB_REF_NAME" --json url --jq '.url' >> "$GITHUB_STEP_SUMMARY"
