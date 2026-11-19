@@ -197,6 +197,21 @@ local function Changed(f, read)
 end
 
 ns.JourneyRecap.RegisterMoment("find", { order = 10, entry = "finds", field = "find", rank = 2,
+    -- First means first in the captured route, as this feature already
+    -- records it. A first green can also be the first pair of shoulders:
+    -- Found writes two records for the same arrival in the bags. Its exact
+    -- observed item, time and source identify one occurrence, while the
+    -- two cards still keep what each first meant. Authored cards remain
+    -- separate choices and an incomplete old record keeps its own identity.
+    selection = function(m)
+        local rec, event = m.find, m.find
+        if rec and not rec.customOf and type(rec.t) == "number" and rec.t >= 0 and rec.t < math.huge
+            and type(rec.link) == "string" and rec.link ~= "" then
+            event = "find:" .. rec.t .. ":" .. #rec.link .. ":" .. rec.link
+                .. ":" .. tostring(rec.from or "") .. ":" .. tostring(rec.guid or "")
+        end
+        return { family = "discovery", event = event, context = "first" }
+    end,
     custom = {
         label = L["First Found"],
         heading = L["A first found"],

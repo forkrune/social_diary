@@ -415,6 +415,18 @@ local function Moment(kind)
     end
 end
 
+-- A gift that was then put on has an observed link between two events:
+-- the item arriving from this person and the user's own later wear. Other
+-- upgrades keep their ordinary rank. This never says what the giver meant,
+-- or that anyone else saw the item being worn.
+local function Selection(m)
+    local rec = m.upgrade
+    local linked = rec and rec.from == "trade" and type(rec.guid) == "string" and rec.guid ~= ""
+        and type(rec.found) == "number" and rec.found >= 0
+        and type(rec.t) == "number" and rec.t < math.huge and rec.found <= rec.t
+    return { family = "equipment", event = rec, context = linked and "linked" or nil }
+end
+
 -- The moments are registered once their marks are (kinds.lua: a moment
 -- needs a mark of its kind): Upgrades.Moments(), called at the foot of
 -- Mark.lua.
@@ -427,9 +439,11 @@ function Upgrades.Moments()
             for _, rec in ipairs(pieces) do into[#into + 1] = rec end
         end,
         rankAs = function(m) return m.gift and "session" or "upgrade" end,
+        selection = Selection,
         moment = Moment("upgrade") })
     ns.JourneyRecap.RegisterMoment("piece", { order = 75, entry = Upgrades.PIECES, field = "upgrade", rank = 6.5,
         light = true,
         gather = function() end,
+        selection = Selection,
         moment = Moment("piece") })
 end

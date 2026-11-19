@@ -176,6 +176,8 @@ ns.Locale.Add("ruRU", {
     ["yours at last"] = "наконец-то ты",
     ["someone's"] = "кто-то",
     ["we fell twice"] = "мы погибли дважды",
+    ["you fell twice"] = "<you:ты погиб/ты погибла> дважды",
+    ["you fell once|you fell %s times##plural"] = "<you:ты погиб/ты погибла> %s раз|<you:ты погиб/ты погибла> %s раза|<you:ты погиб/ты погибла> %s раз",
     ["we fell once|we fell %s times##plural"] = "мы погибли %s раз|мы погибли %s раза|мы погибли %s раз",
     ["%s twice"] = "%s — дважды",
     ["%s thrice"] = "%s — трижды",

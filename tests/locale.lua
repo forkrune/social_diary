@@ -497,7 +497,7 @@ end
 Section("no-break spaces, by the client's fonts")
 do
     local NB = "\194\160"
-    local KEY = "%1$s saved {you} at %2$s%%\194\160health"
+    local KEY = "killed %1$s for\194\160%2$d"
 
     for _, id in ipairs({ "enUS", "deDE", "ruRU" }) do
         local ns = GrammarNs(id)
@@ -523,7 +523,7 @@ do
         Plain(Text.Duration(55 * 60), "55 min", "a time")
         Plain(Text.LedgerTime(93 * 60), "1 h 33", "the ledger's time")
         Eq(Text.Glue("killed you twice"), "killed you twice", id .. ": glued words")
-        Plain(ns.L[KEY], "%1$s saved {you} at %2$s%% health", "a key's words")
+        Plain(ns.L[KEY], "killed %1$s for %2$d", "a key's words")
         Eq(ns.Fmt("%d" .. NB .. "min", 4), "4 min", id .. ": a filled template")
         Eq(ns.Locale.Spaces("3" .. NB .. "h"), "3 h", id .. ": Locale.Spaces")
     end

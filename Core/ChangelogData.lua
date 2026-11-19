@@ -7,6 +7,19 @@ local addonName, ns = ...
 
 ns.Changelog = {
     {
+        version = "4.2.0-alpha.1",
+        summary = "This alpha update brings more of your everyday adventures into _Your Diary_, with more precise accounts of who watched and who helped. These changes have not yet been checked in the game.",
+        groups = {
+            { heading = "Shiny new Things", entries = {
+                { text = "_Your Diary_ remembers more of your everyday adventures", sub = { { text = "Profession gains, confirmed help and unfinished dungeon visits find their place" }, { text = "Highlights favour distinct experiences and the notes you write" } } },
+            } },
+            { heading = "Fixes", entries = {
+                { text = "_Your Diary_ now tells the outing shown on its maps" },
+                { text = "_Witnesses_ distinguish sustained watching from confirmed help during fights" },
+            } },
+        },
+    },
+    {
         version = "4.1.1",
         summary = "A small Update: the preset tags now speak your language, and Feign Death or healing yourself no longer leaves false deaths and _Close Calls_ in your diary.",
         groups = {
@@ -53,21 +66,6 @@ ns.Changelog = {
             { heading = "Fixes", entries = {
                 { text = "In Korean and Chinese Clients, Box / Tofu Characters no longer appear in place of no-break spaces" },
                 { text = "Language Fixes for ruRU" },
-            } },
-        },
-    },
-    {
-        version = "4.0.0",
-        summary = "This big update brings battleground Views, starting with Warsong Gulch, and the diary in German, Spanish, French and Russian. Both are still early, so please send feedback and translation suggestions on GitHub!",
-        groups = {
-            { heading = "Shiny new Things", entries = {
-                { text = "_Your Diary_ now keeps your battleground matches, with an evening's overview", sub = { { text = "_Toasts_ and timelines tell of diary people you meet there" }, { text = "New _Battlegrounds_ settings choose how many full scoreboards are saved" } } },
-                { text = "The diary is now translated into German, Spanish, French and Russian", thanks = "CarnVanBeck", sub = { { text = "A new _Language_ page in _Settings_ picks the diary's language" } } },
-                { text = "Suggest a better wording for any line in a translated diary", sub = { { text = "A note greets you the first time the diary speaks your language" } } },
-                { text = "A new UI scale option in _Interface_ settings" },
-            } },
-            { heading = "Fixes", entries = {
-                { text = "Using the diary with a controller no longer breaks buffs and targeting" },
             } },
         },
     },

@@ -2196,7 +2196,7 @@ do
     local Plate = ns.UI.JourneyPlate
     local kinds = {}
     for _, spec in ipairs(Plate.MARK_ORDER) do kinds[#kinds + 1] = spec.kind end
-    Eq(table.concat(kinds, " "), "find upgrade finale skill close killedBy witnessed met luck fortune duel tame piece campfire", "the registered marks' draw order")
+    Eq(table.concat(kinds, " "), "find upgrade finale skill skillProgress close killedBy witnessed assisted met luck fortune duel tame piece campfire", "the registered marks' draw order")
     Check(Plate.MARKS.fortune.order < Plate.ROAD_DEATHS and Plate.ROAD_DEATHS < Plate.MARKS.campfire.order,
         "the deaths on the road are not drawn between good luck and the fires")
     for kind, key in pairs({ find = "finds", finale = "finales", skill = "skills", close = "closeCalls",
@@ -2268,7 +2268,7 @@ do
     Plate.RemoveMark("tested")
     kinds = {}
     for _, spec in ipairs(Plate.MARK_ORDER) do kinds[#kinds + 1] = spec.kind end
-    Eq(table.concat(kinds, " "), "find upgrade finale skill close killedBy witnessed met luck fortune duel tame piece campfire", "the kind taken out stayed")
+    Eq(table.concat(kinds, " "), "find upgrade finale skill skillProgress close killedBy witnessed assisted met luck fortune duel tame piece campfire", "the kind taken out stayed")
     Eq(Plate.MARKS.tested, nil, "the kind taken out is still registered")
     Eq(Plate.CAP.tested, nil, "the kind taken out left its cap")
     drawn = {}
@@ -2517,8 +2517,8 @@ do
     YD.OpenLevel(n)
     for _, item in ipairs(Lines("sitting")) do Eq(item.entry, n, "a closed entry lists its sittings") end
 
-    -- Runs: a line under the sitting they began in, indented, each a run
-    -- with a boss killed (RunWorthy).
+    -- Visits with a recorded experience: a line under the sitting they
+    -- began in, indented (RunWorthy).
     local holder, visit
     for k, p in ipairs(newest.pieces) do
         if p.runs[1] and not visit then holder, visit = k, p.runs[1] end
@@ -2536,7 +2536,7 @@ do
     while above and above > 0 and (page.items[above].run or page.items[above].bg) do above = above - 1 end
     Eq(above and page.items[above].sitting, holder, "a run's line is not under its sitting")
     for _, item in ipairs(runs) do
-        Check(ns.JourneyRecap.RunWorthy(item.run), "a run with no boss killed has a line")
+        Check(ns.JourneyRecap.RunWorthy(item.run), "a visit without a qualifying experience has a line")
     end
     row = Shows(page.items[line])
     Check(row and row.door[1]:IsShown() and row.zone:GetText() == (visit.name or "An instance"),
@@ -2545,16 +2545,29 @@ do
     Eq(page.mode .. ":" .. tostring(page.runVisit), "run:" .. visit.id, "a run's line does not open its page")
     Eq(page.piece, holder, "a run's page is not in its sitting")
 
-    -- Its boss kills taken away: no line, no page; its ledger row opens
-    -- the dungeon's map instead.
+    -- Taking away only the boss kills no longer erases an observed visit.
+    -- Once every qualifying observation is absent, the brief door still
+    -- stays in the ledger and opens the dungeon's map instead.
     local kills, inferred = visit.bossesKilled, visit.inferred
+    local fields, saved = { "deaths", "deathLog", "pulls", "route", "spans" }, {}
+    for _, key in ipairs(fields) do saved[key] = visit[key] end
     visit.bossesKilled, visit.inferred = {}, nil
+    Check(ns.JourneyRecap.RunWorthy(visit), "the existing attempts and time vanished with the boss kills")
     ns.Journey.Touch()
     ns.UI.RefreshJourneyPage(false)
     YD.OpenLevel(#page.recap.entries)
-    for _, item in ipairs(Lines("run")) do Check(item.run.id ~= visit.id, "a run with no boss killed has a line") end
+    local unfinished
+    for _, item in ipairs(Lines("run")) do if item.run.id == visit.id then unfinished = item end end
+    Check(unfinished ~= nil, "an observed no-boss visit lost its run line")
+    YD.OpenRun(visit.id)
+    Eq(page.mode, "run", "an observed no-boss visit did not open its page")
+    for _, key in ipairs(fields) do visit[key] = nil end
+    ns.Journey.Touch()
+    ns.UI.RefreshJourneyPage(false)
+    YD.OpenLevel(#page.recap.entries)
+    for _, item in ipairs(Lines("run")) do Check(item.run.id ~= visit.id, "an empty visit has a run line") end
     for _, p in ipairs(page.recap.entries[#page.recap.entries].pieces) do
-        for _, v in ipairs(p.runs) do Check(v.id ~= visit.id, "a run with no boss killed is a sitting's page") end
+        for _, v in ipairs(p.runs) do Check(v.id ~= visit.id, "an empty visit is a sitting's page") end
     end
     local ledger
     for _, item in ipairs(page.items) do
@@ -2567,11 +2580,12 @@ do
         row = Shows(ledger)
         row:Click()
         Eq(page.mode .. ":" .. tostring(page.fullMap), "full:" .. tostring(ledger.mapID),
-            "a run with no boss killed: its ledger row does not open the dungeon's map")
+            "an empty visit: its ledger row does not open the dungeon's map")
     end
     YD.OpenRun(visit.id)
-    Check(page.mode ~= "run", "OpenRun opened a run with no boss killed")
+    Check(page.mode ~= "run", "OpenRun opened an empty visit")
     visit.bossesKilled, visit.inferred = kills, inferred
+    for _, key in ipairs(fields) do visit[key] = saved[key] end
     ns.Journey.Touch()
     ns.UI.RefreshJourneyPage(false)
 

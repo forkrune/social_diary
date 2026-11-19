@@ -25,7 +25,7 @@ classic gameplay. Interface version is in `social_diary.toc`.
 | `Features/<Name>/` | One detection each, whole (chat, trade, level-ups, World PvP, rare kills, deaths, witnesses, close calls, hunts, firsts found, quest finales, profession caps, campfires): its row kind, route list, recap moment, mark, margin note, words, capture, static data and test data, registered into `Core/` and `UI/`. Core never names a feature. How to add one: the `/new-feature` skill (`.claude/skills/new-feature/`) |
 | `Vendor/DungeonCrawlerForever/` | Dungeon Crawler Forever's map data and drawn map art (GPL-3.0-or-later; release in `VERSION`), copied as it ships with one changed line per file (it loads into `ns.DCF`). Never edit it; only `Core/Dungeons.lua` reads it |
 | `Dev/` | Debug tools and test data (not for release) |
-| `tests/` | Offline test suite against a WoW API mock (`wowmock.lua`). Run: `luajit tests/run.lua` (`-v` verbose, or pass file names) — add new files to `FILES` in `run.lua` |
+| `tests/` | Offline test suite against a WoW API mock (`wowmock.lua`). Full suite: `bash Dev/ci/test.sh`; focused tests: `luajit tests/run.lua people.lua` (`-v` verbose). Add new files to `FILES` in `run.lua` |
 | `.claude/` | Skills (`skills/`) and project rules (`rules/`) are in the repo. The PRD, plans, research notes and UI proposals stay local and untracked (`.gitignore`); code comments cite them by name and requirement ID |
 | `CHANGELOG.md` | Release notes |
 | `README.md`, `CONTRIBUTING.md`, `.github/` | Public front door: install, privacy, credits; contributor guide; CI (`tests.yml`), release (`release.yml`), issue forms |
@@ -33,6 +33,18 @@ classic gameplay. Interface version is in `social_diary.toc`.
 Never commit images (`*.png` is gitignored) or anything recorded from real players (names, GUIDs, chat). Tests and examples use invented names.
 
 ## Rules
+
+`main` is the fork's integration and testing branch. Complete and validate
+bounded changes, then merge when the user has authorised it. Successful main
+CI builds provide installable testing artifacts. Version tags publish GitHub
+releases; use an alpha or beta for work awaiting live-client validation.
+Record offline results and outstanding in-game checks separately. Do not
+describe a testing build as live-client verified.
+
+Use `bash Dev/ci/test.sh` for every full-suite check, including release
+preflight. It runs the authoritative test registry in fresh LuaJIT processes
+to avoid accumulating mock UI memory. Keep the direct LuaJIT command for
+focused files.
 
 The addon is live, so players' saved data has to survive every update. Never drop, move or reinterpret saved fields without a migration: bump the matching schema in `Core/DB.lua`, add a `STEPS` entry, and test it on an old-shaped table.
 

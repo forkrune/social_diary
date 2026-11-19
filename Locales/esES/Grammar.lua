@@ -77,6 +77,11 @@ G.Genitive = function(name) return "de " .. name end
 -- The reader's words, each with its form for another character's name.
 -- Filled after the translation (every braced word in Locales/esES/).
 G.YOU_FOR = {
+    ["te habían atacado"] = "habían atacado a %s",
+    ["te curó"] = "curó a %s",
+    ["te protegió con un escudo"] = "protegió a %s con un escudo",
+    ["te había atacado"] = "había atacado a %s",
+    ["sobreviviste"] = "%s sobrevivió",
     ["te sentaste"] = "%s se sentó", ["huiste"] = "%s huyó", ["tuyo"] = "de %s",
     ["tuya"] = "de %s", ["ti"] = "%s", ["tú"] = "%s", ["contigo"] = "con %s",
     ["sacaste"] = "%s sacó", ["moriste"] = "%s murió", ["mataste"] = "%s mató",

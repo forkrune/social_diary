@@ -31,7 +31,7 @@ Eq(Orders(), "met 2, tameCustom 2.5, witnessCustom 3, killerCustom 4, foeCustom 
     "the margin's kinds")
 Eq(Margin.PEOPLE.close, 10, "the people who did something with you")
 Eq(Margin.PEOPLE.seen, 80, "the people only seen")
-for _, key in ipairs({ "find", "finale", "skill", "death", "close", "luck", "fortune", "witness", "campfire" }) do
+for _, key in ipairs({ "find", "finale", "skill", "skillProgress", "death", "close", "luck", "fortune", "witness", "assisted", "campfire" }) do
     Check(Text.CAPTIONS[key] ~= nil, "no caption words for " .. key)
 end
 local function Paragraphs()
@@ -39,7 +39,7 @@ local function Paragraphs()
     for _, p in ipairs(Text.Paragraphs()) do list[#list + 1] = p.key .. " " .. p.at end
     return table.concat(list, ", ")
 end
-Eq(Paragraphs(), "opening 10, time 20, people 30, find 40, upgrade 45, finale 50, skill 60, close 70, hunts 75", "the prose's paragraphs")
+Eq(Paragraphs(), "opening 10, time 20, people 30, find 40, upgrade 45, finale 50, skill 60, skillProgress 61, close 70, hunts 75, assisted 76", "the prose's paragraphs")
 
 --------------------------------------------------------------------------
 Section("a paragraph registered by a later file")
@@ -67,7 +67,7 @@ do
         "the scrap's paragraph is out of place: " .. table.concat(lines, " / "))
     Text.RemoveLines("scrap")
     Eq(table.concat(Text.Lines(e, now, {}), " / "), table.concat(before, " / "), "the scrap's paragraph stayed")
-    Eq(Paragraphs(), "opening 10, time 20, people 30, find 40, upgrade 45, finale 50, skill 60, close 70, hunts 75",
+    Eq(Paragraphs(), "opening 10, time 20, people 30, find 40, upgrade 45, finale 50, skill 60, skillProgress 61, close 70, hunts 75, assisted 76",
         "the paragraphs after the scrap left")
 
     -- Kinds sharing a `run` write one paragraph: the close calls (70) and
@@ -268,7 +268,7 @@ Section("at equal numbers, the diary's own first")
 -- at their numbers (the registries' core entries, Core/Registry.lua): a
 -- kind at the same number goes after them, never before.
 Text.RegisterLines("tie", { at = 30, lines = function() return nil end })
-Eq(Paragraphs(), "opening 10, time 20, people 30, tie 30, find 40, upgrade 45, finale 50, skill 60, close 70, hunts 75",
+Eq(Paragraphs(), "opening 10, time 20, people 30, tie 30, find 40, upgrade 45, finale 50, skill 60, skillProgress 61, close 70, hunts 75, assisted 76",
     "a paragraph at the people's number went before them")
 Text.RemoveLines("tie")
 

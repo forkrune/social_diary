@@ -2050,7 +2050,7 @@ do
     local light = {}
     for kind in pairs(R.LIGHT) do light[#light + 1] = kind end
     table.sort(light)
-    Eq(table.concat(light, ","), "arrive,campfire,duel,dungeon,finale,fortune,level,piece,road,skill,stay", "the light kinds")
+    Eq(table.concat(light, ","), "arrive,campfire,duel,dungeon,finale,fortune,level,piece,road,skill,skillProgress,stay", "the light kinds")
     for _, kind in ipairs({ "session", "fight", "note", "first", "gift", "find", "death", "close", "luck" }) do
         Check(R.LIGHT[kind] == nil, kind .. " counts as light")
     end
@@ -2324,7 +2324,8 @@ do
         table.sort(maps)
         return table.concat(maps, ",")
     end
-    Eq(With({ id = 7 }), "2", "the door's plate, its run recorded, is left out")
+    Eq(With({ id = 7, bossesKilled = { "Briar Keeper" } }), "2", "the door's plate, its run has a page, is left out")
+    Eq(With({ id = 8 }), "1,2", "a retained visit without its own page keeps the door")
     Eq(With(nil), "1,2", "the door's plate, no run recorded behind it, stays")
     Eq(R2.DOOR_ONLY.arrive and R2.DOOR_ONLY.level and not R2.DOOR_ONLY.stay, true,
         "an arrival and a pin go with the door; a stay does not")

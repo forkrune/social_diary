@@ -23,6 +23,25 @@ local ProfessionCaps = ns.ProfessionCaps
 local MARK = { steps = 4, w = 3.2, rise = 2.9, line = 1.0, per = 75, halo = 17 }
 ProfessionCaps.MARK = MARK
 
+-- The same stairs carry a cap and a smaller gain. A cap keeps its original
+-- filled steps; progress below the first cap leaves every step outlined,
+-- rather than drawing a completed Apprentice step that was not reached.
+local function Draw(kit, x, y, rank, progress)
+    local S = MARK
+    local n, w, t = S.steps, S.w, S.line
+    local climbed = type(rank) == "number" and kit.Clamp(math.floor(rank / S.per), progress and 0 or 1, n) or n
+    local x0, base = x - n * w / 2, y + n * S.rise / 2
+    for i = 1, n do
+        local h, wide = i * S.rise, i < n and w + 0.3 or w
+        kit.Box(kit.ink, x0 + (i - 1) * w + wide / 2, base - h / 2, wide, h, kit.INK_STRONG, 1)
+    end
+    for i = climbed + 1, n do
+        local h = i * S.rise
+        local left, right = x0 + (i - 1) * w + t, x0 + i * w + (i < n and t or -t)
+        kit.Box(kit.inner, (left + right) / 2, base - h / 2, right - left, h - 2 * t, kit.P, 1)
+    end
+end
+
 -- Ranked with the tailpiece (a chain's end, order 10), right after it
 -- (order 20): its steps climbed by the best cap on the spot (`arg`).
 ns.UI.JourneyPlate.RegisterMark("skill", {
@@ -47,19 +66,22 @@ ns.UI.JourneyPlate.RegisterMark("skill", {
     -- the paper inside the steps above the rank reached. The paper of each
     -- such step reaches on under the next, so the outline runs round them
     -- as one, with no wall between.
-    draw = function(kit, x, y, rank)
-        local S = MARK
-        local n, w, t = S.steps, S.w, S.line
-        local climbed = type(rank) == "number" and kit.Clamp(math.floor(rank / S.per), 1, n) or n
-        local x0, base = x - n * w / 2, y + n * S.rise / 2
-        for i = 1, n do
-            local h, wide = i * S.rise, i < n and w + 0.3 or w
-            kit.Box(kit.ink, x0 + (i - 1) * w + wide / 2, base - h / 2, wide, h, kit.INK_STRONG, 1)
+    draw = Draw,
+})
+
+-- No extra card or controls: the existing profession mark's room, the
+-- observed rank range in its caption, and each bounded stretch in its tooltip.
+ns.UI.JourneyPlate.RegisterMark("skillProgress", {
+    order = 21, cap = 10, count = "skillProgress",
+    radius = MARK.steps * MARK.w / 2 + 1, halo = MARK.halo, hover = MARK.halo,
+    tip = function(m, now) return ProfessionCaps.ProgressTip(m.progress, now) end,
+    arg = function(list)
+        local rank
+        for _, m in ipairs(list) do
+            local nextRank = m.progress and m.progress.rank
+            if type(nextRank) == "number" and (not rank or nextRank > rank) then rank = nextRank end
         end
-        for i = climbed + 1, n do
-            local h = i * S.rise
-            local left, right = x0 + (i - 1) * w + t, x0 + i * w + (i < n and t or -t)
-            kit.Box(kit.inner, (left + right) / 2, base - h / 2, right - left, h - 2 * t, kit.P, 1)
-        end
+        return rank
     end,
+    draw = function(kit, x, y, rank) Draw(kit, x, y, rank, true) end,
 })

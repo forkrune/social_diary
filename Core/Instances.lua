@@ -130,11 +130,51 @@ local function SecondsInside(visit, now)
     return n
 end
 
--- Whether a run is worth keeping (INS-10): a way drawn on it is, whatever
--- else came of it (traced as it was played: UI/Journey/Left.lua's LiveRun).
-local function Kept(visit, now)
+-- Time established by closed inside spans, without filling any gaps.
+-- Once MAX_SPANS is reached, Enter reopens the last slot to bound the
+-- historical record's size. That slot can then include time outside, so
+-- it cannot establish the duration of a quiet visit. Earlier closed spans
+-- still can. This stricter read leaves old stored spans and their meaning
+-- alone; a repeated or overlapping range also contributes its time once.
+function Instances.ObservedInside(visit)
+    local n, last = 0, nil
+    for i, span in ipairs(visit and visit.spans or {}) do
+        local a, b = span.from, span.to
+        if i < MAX_SPANS and type(a) == "number" and type(b) == "number"
+            and a >= 0 and b < math.huge and b > a then
+            local from = math.max(a, last or a)
+            if b > from then n = n + b - from end
+            last = math.max(last or b, b)
+        end
+    end
+    return n
+end
+
+-- Observed outcomes and the player's own drawing survive even a short
+-- solo visit. A finished attempt says that an encounter happened, without
+-- asserting a kill, a wipe or why the player left. The recap reads this
+-- same rule, so an unsuccessful visit cannot earn a page only to be thrown
+-- away when the player leaves. `route` is an authored drawing, never an
+-- automatically measured path through the dungeon.
+function Instances.HasMoments(visit)
+    if not visit then return false end
     if #(visit.bossesKilled or {}) > 0 then return true end
+    if type(visit.inferred) == "table" and next(visit.inferred) ~= nil then return true end
     if type(visit.route) == "table" and #visit.route > 0 then return true end
+    if type(visit.deaths) == "number" and visit.deaths > 0 then return true end
+    if type(visit.deathLog) == "table" and #visit.deathLog > 0 then return true end
+    for _, pull in ipairs(visit.pulls or {}) do
+        if type(pull.start) == "number" and type(pull.stop) == "number" and pull.stop >= pull.start then
+            return true
+        end
+    end
+    return false
+end
+
+-- Whether a run is worth keeping (INS-10). Being grouped still keeps the
+-- visit's People history, even when it is too brief to need its own page.
+local function Kept(visit, now)
+    if Instances.HasMoments(visit) then return true end
     for _, m in ipairs(visit.members or {}) do
         if m.guid ~= visit.me then return true end
     end

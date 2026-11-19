@@ -19,14 +19,21 @@ The suite runs offline, against a mock of the WoW API (`tests/wowmock.lua`).
 You need [LuaJIT](https://luajit.org).
 
 ```sh
-luajit tests/run.lua            # everything
-luajit tests/run.lua -v         # verbose
+bash Dev/ci/test.sh             # everything, a fresh LuaJIT process per file
 luajit tests/run.lua people.lua # only the files you name
+luajit tests/run.lua -v people  # verbose output for one file
 ```
 
 A new test file only runs once it is listed in `FILES` in `tests/run.lua`.
+The CI runner reads that list directly. Running every file in one LuaJIT
+process can exceed runner memory, so use the isolated runner for the full
+suite. Test assertions and failure handling are unchanged.
+
 CI runs the suite on every push to `main` and on every pull request
-(`.github/workflows/tests.yml`).
+(`.github/workflows/tests.yml`). After a successful main run it also packages
+an installable addon ZIP, with the source commit and checksums, as an Actions
+artifact retained for 14 days. Pull requests validate the changes before
+integration.
 
 The mock does not do layout. For anything a player sees, try it in the game
 client as well.
@@ -90,13 +97,13 @@ positional `%1$s`, `ns.Plural` for counts, zones through `ns.ZoneIn`) are in
   `--check` only says whether it is up to date; `--missing <id>` lists the
   keys a locale has no words for yet, and `--context <id> [path]` shows each
   with the code round it (what its values are, where it shows).
-- **Tests:** `luajit tests/run.lua` (its `locale` file checks every locale
+- **Tests:** `bash Dev/ci/test.sh` (its `locale` file checks every locale
   in the TOC: no unknown keys, the same placeholders, one plural form per
   category; keys still to translate are listed as a note, not a failure, and
   read in English until then), then the whole suite under the locale:
 
   ```sh
-  luajit tests/run.lua --locale deDE
+  bash Dev/ci/test.sh --locale deDE
   ```
 
   It must end with `NO ADDON ERRORS UNDER deDE`.
@@ -131,10 +138,10 @@ screenshots to your pull request or issue.
 
 ## Pull request checklist
 
-- [ ] `luajit tests/run.lua` passes, new code has tests, and new test files
+- [ ] `bash Dev/ci/test.sh` passes, new code has tests, and new test files
       are in `FILES` in `tests/run.lua`.
-- [ ] Tried in the game client. Say what you did, and attach a screenshot for
-      UI changes.
+- [ ] State what was tried in the game client and what still needs testing.
+      Include a screenshot for UI changes when the client is available.
 - [ ] Player-facing text follows the copywriter skill.
 - [ ] `CHANGELOG.md` has a line under `## [Unreleased]` for anything a player
       would notice.
@@ -142,11 +149,67 @@ screenshots to your pull request or issue.
 
 ## Releases
 
-Releases are made by the maintainer. The version in `## Version` in
-`social_diary.toc` and the changelog are raised together, then a tag
-`v<version>` is pushed. `.github/workflows/release.yml` runs the tests,
-packages the addon with the BigWigs packager and publishes a GitHub release.
-`.claude/skills/release-version/` describes the steps.
+`main` is the integration and testing branch. Merge bounded changes after
+offline validation, then use the resulting build to test in the game and
+iterate. Pending live-client checks should be documented; they do not prevent
+merging work intended for a testing build.
+
+Use `vX.Y.Z-alpha.N` or `vX.Y.Z-beta.N` for testing releases. Use `vX.Y.Z`
+for a stable release. The tag must match `## Version:` in `social_diary.toc`
+and point to a commit on `main`. Raise the TOC version and changelog together,
+then run `luajit Dev/changelog.lua` to update the in-game changelog. Keep
+`## Interface:` unchanged unless the game requires an update.
+
+After the version change is merged and main CI succeeds, create and push the
+tag at that verified commit. For the first prepared alpha:
+
+```sh
+git fetch origin main
+git tag -a v4.2.0-alpha.1 origin/main -m "Social Diary 4.2.0-alpha.1"
+git push origin v4.2.0-alpha.1
+```
+
+Check that the commit still carries `## Version: 4.2.0-alpha.1` before using
+those commands; use the new version for later releases. Do not move an
+already-published tag.
+
+`.github/workflows/release.yml` validates the tag and source, runs the isolated
+suite, packages with BigWigs, checks the installable ZIP, and publishes it on
+GitHub with checksums and build provenance. Alpha and beta tags create GitHub
+prereleases. Only the publishing job can write repository contents. Releases
+go to this fork; no CurseForge or Wago upload is configured.
+
+The maintainer must enable GitHub Actions in a newly created fork. A checked-in
+workflow alone does not establish that a run or release succeeded. Inspect the
+finished run and its assets. The repository's release-version skill describes
+the version/changelog preflight; this section defines the fork's testing policy.
+
+### Testing a build
+
+Keep the ZIP's version, commit, and checksum with your notes. Back up the
+Social Diary saved variables before installing a testing build, and fully
+restart the client so all manifest entries load.
+
+For `4.2.0-alpha.1`, check these scenarios:
+
+1. Gain profession ranks below a training cap, then reach the cap. Verify
+   the recorded endpoints and that the same gain appears only once.
+2. Receive identifiable healing, shielding, dispelling or a threat kill from
+   another player. Compare the diary's action and person with what happened.
+   Ambiguous or unavailable evidence should produce no attributed help.
+3. Compare a sustained witness at a death with somebody who arrives only
+   afterwards. Try an environmental death and a duel as well.
+4. Leave a dungeon after an attempt or death without defeating a boss. Check
+   the retained visit, its zero boss count, and its placement in the outing.
+5. Open an outing with several distinct moments and repeated companions.
+   Check that the highlights fit the outing and do not repeat one encounter.
+6. Check the new cards with your normal locale, font size and controller.
+   Forget a participant and confirm their derived assistance story disappears.
+
+Report the build version or commit, locale, expected behaviour, observed
+behaviour, and reproducible steps. Remove real player names, GUIDs and chat
+from shared examples. Offline assertions cover model behaviour; the live
+checks establish actual game payloads, rendering and interaction.
 
 ## Licence
 

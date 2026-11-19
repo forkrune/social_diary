@@ -60,9 +60,9 @@ Eq(Line("pvp_kill", ALT, { by = STRANGER.guid }), "Thessaly's group killed Bram 
 Eq(Line("pvp_death", ALT, { probable = true }), "Bram probably killed Thessaly in Mulgore", "pvp_death")
 Eq(Line("pvp_death", SELF.guid), "Bram killed you in Mulgore", "pvp_death, the one playing")
 Eq(Line("whisper_out", ALT, nil, { excerpt = "hi" }), 'Thessaly whispered: "hi"', "whisper_out")
-Eq(Line("watched_death", ALT), "Bram watched Thessaly die in Mulgore", "watched_death")
-Eq(Line("tried_to_help", ALT), "Bram tried to save Thessaly in Mulgore", "tried_to_help")
-Eq(Line("saved_you", ALT, { pct = 6 }), "Bram saved Thessaly at 6%\194\160health in Mulgore", "saved_you")
+Eq(Line("watched_death", ALT), "Bram was seen around the time Thessaly died in Mulgore", "watched_death")
+Eq(Line("tried_to_help", ALT), "Bram was seen around the time Thessaly died in Mulgore", "tried_to_help")
+Eq(Line("saved_you", ALT, { pct = 6 }), "Bram was seen during a fight Thessaly survived in Mulgore", "saved_you")
 Eq(Line("campfire", ALT), "Thessaly and Bram sat by a campfire together in Mulgore", "campfire")
 Eq(Line("duel_series", ALT, { won = 2, fled = 1 }), "Won 2 duels against Bram and lost 1 in Mulgore"
     .. ", and Thessaly fled once", "duel")

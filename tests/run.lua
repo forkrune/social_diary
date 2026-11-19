@@ -39,6 +39,14 @@ local FILES = {
     "upgrades_ui",
     "skills",
     "skills_ui",
+    "profession_progress",
+    "profession_progress_ui",
+    "memory_selection",
+    "read_preparation",
+    "assistance_detection",
+    "assistance_story",
+    "unfinished_runs",
+    "unfinished_run_ui",
     "combat",
     "questie",
     "journal_ui",
@@ -101,6 +109,10 @@ local FILES = {
     "helpers",
     "sounds",
     "witnesses",
+    "witness_evidence",
+    "witness_detection",
+    "row_reasons",
+    "witness_locale",
     "witness_card",
     "campfire",
     "campfire_ui",
@@ -120,5 +132,13 @@ local FILES = {
     "fonts",
     "locale",
 }
+
+-- CI uses this same registry, one process per file, to release each mock's
+-- frames and closures before loading the next. No second file list to drift.
+if arg and arg[1] == "--list" then
+    assert(#arg == 1, "--list cannot be combined with test arguments")
+    for _, name in ipairs(FILES) do print(name) end
+    return
+end
 
 dofile(here .. "/harness.lua").Run(here, FILES, arg)

@@ -196,6 +196,8 @@ ns.Locale.Add("plPL", {
     ["yours at last"] = "wreszcie w twoich rękach",
     ["someone's"] = "czyjeś",
     ["we fell twice"] = "Dwie śmierci w drużynie",
+    ["you fell twice"] = "<you:zginąłeś/zginęłaś> dwa razy",
+    ["you fell once|you fell %s times##plural"] = "<you:zginąłeś/zginęłaś> raz|<you:zginąłeś/zginęłaś> %s razy|<you:zginąłeś/zginęłaś> %s razy",
     ["we fell once|we fell %s times##plural"] = "Jedna śmierć w drużynie|%s<f> śmierci w drużynie|%s<f> śmierci w drużynie",
     ["%s twice"] = "%s dwa razy",
     ["%s thrice"] = "%s trzy razy",

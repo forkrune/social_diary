@@ -70,8 +70,9 @@ function Interactions.Totals()
 end
 
 -- Everyone whose latest row is at or after `since`, newest first:
--- { guid, time, type } of that row. DIA-3's picker offers them as "someone
--- I just dealt with".
+-- { guid, time, type, row } of that row. The original row is read-only to
+-- callers and lets its kind explain the encounter from its own context.
+-- DIA-3's picker offers them as "someone I just dealt with".
 function Interactions.Since(since)
     local list = {}
     for guid, rows in pairs(ns.db.interactions) do
@@ -79,7 +80,7 @@ function Interactions.Since(since)
             local row = rows[i]
             if not Observed(row.type) then
                 if row.time >= since then
-                    list[#list + 1] = { guid = guid, time = row.time, type = row.type }
+                    list[#list + 1] = { guid = guid, time = row.time, type = row.type, row = row }
                 end
                 break
             end
@@ -278,6 +279,9 @@ function Interactions.Remove(guid, row)
             table.remove(rows, i)
             if #rows == 0 then ns.db.interactions[guid] = nil end
             if ns.Diary.IsDiary(guid) then ns.Touch() end
+            -- A stranger's row can already be on Your Diary's derived
+            -- pages. Removing it invalidates those reads just as Add did.
+            ns.TouchSeen()
             return true
         end
     end
@@ -317,6 +321,7 @@ function Interactions.Prune(now)
     end
 
     if droppedRows > 0 then
+        ns.TouchSeen()
         ns.Debug("pruned %d interaction(s) and %d character(s) past %d days",
             droppedRows, droppedCharacters, days)
     end
@@ -331,7 +336,9 @@ end
 -- SafeGUID, which turns an unreadable GUID into nil as well.
 function Interactions.Forget(guid)
     if guid == nil then
+        local hadRows = next(ns.db.interactions) ~= nil
         wipe(ns.db.interactions)
+        if hadRows then ns.TouchSeen() end
         return true
     end
 
@@ -340,6 +347,7 @@ function Interactions.Forget(guid)
     if ns.db.interactions[guid] == nil then return false end
 
     ns.db.interactions[guid] = nil
+    ns.TouchSeen()
     return true
 end
 ns.RegisterStore("interactions", Interactions.Forget)

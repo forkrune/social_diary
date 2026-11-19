@@ -194,6 +194,8 @@ ns.Locale.Add("deDE", {
     ["as far as an Expert goes"] = "so weit ein Experte kommt",
     ["a profession"] = "ein Beruf",
     ["its cap##at"] = "dem Maximum",
+    ["%1$s from %2$d to %3$d"] = "%1$s von %2$d auf %3$d",
+    ["%1$s went from %2$d to %3$d."] = "%1$s stieg von %2$d auf %3$d.",
     ["its cap##reached"] = "das Maximum",
     ["%1$s at %2$s"] = "%1$s auf %2$s",
     ["Then %1$s, %2$s."] = "Dann %1$s, %2$s.",

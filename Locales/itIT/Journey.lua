@@ -177,6 +177,8 @@ ns.Locale.Add("itIT", {
     ["yours at last"] = "tuo, finalmente",
     ["someone's"] = "di qualcuno",
     ["we fell twice"] = "siamo caduti due volte",
+    ["you fell twice"] = "sei <you:caduto/caduta> due volte",
+    ["you fell once|you fell %s times##plural"] = "sei <you:caduto/caduta> una volta|sei <you:caduto/caduta> %s volte",
     ["we fell once|we fell %s times##plural"] = "siamo caduti una volta|siamo caduti %s volte",
     ["%s twice"] = "%s due volte",
     ["%s thrice"] = "%s tre volte",

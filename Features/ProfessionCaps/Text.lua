@@ -158,3 +158,107 @@ function ProfessionCaps.Tips(caps, now)
     return Capital(ns.Plural(#trades, L["%s profession at its cap|%s professions at their cap##plural"],
         NUMBER[#trades] or tostring(#trades))), lines
 end
+
+--------------------------------------------------------------------------
+-- Skill gained between observed readings
+--------------------------------------------------------------------------
+
+-- A gain says only what the client supplied. The profession may be Mining,
+-- Cooking or First Aid; the reading does not say what was gathered, made or
+-- used. Keep every bounded stretch separate rather than joining its endpoints
+-- across a journey, a reload or a changed training cap.
+local function ProgressValid(rec)
+    return ProfessionCaps.ValidProgress(rec)
+end
+
+function ProfessionCaps.ProgressWords(rec)
+    if not ProgressValid(rec) then return nil end
+    return Fmt(L["%1$s from %2$d to %3$d"], Trade(rec), rec.fromRank, rec.rank)
+end
+
+function ProfessionCaps.ProgressSentence(rec)
+    if not ProgressValid(rec) then return nil end
+    return Capital(Fmt(L["%1$s went from %2$d to %3$d."], Trade(rec), rec.fromRank, rec.rank))
+end
+
+-- Three stretches are enough for the paragraph. A second profession gets
+-- room before another stretch of the first; the selected facts then return
+-- to time order. This is an editorial limit, not a score for how much a gain
+-- mattered. The other stretches remain on their map marks and in the road.
+local PROGRESS_MOST = 3
+function ProfessionCaps.ProgressSelected(records)
+    local ordered, seen = {}, {}
+    for i, rec in ipairs(records or {}) do
+        if ProgressValid(rec) and not seen[rec] then
+            seen[rec] = true
+            ordered[#ordered + 1] = { rec = rec, at = i }
+        end
+    end
+    table.sort(ordered, function(a, b)
+        if (a.rec.t or 0) ~= (b.rec.t or 0) then return (a.rec.t or 0) < (b.rec.t or 0) end
+        local ak, bk = tostring(a.rec.skillLine or a.rec.name or ""), tostring(b.rec.skillLine or b.rec.name or "")
+        if ak ~= bk then return ak < bk end
+        return a.at < b.at
+    end)
+    local picked, kinds, used = {}, {}, {}
+    local function Take(i, item)
+        picked[#picked + 1], used[i] = item, true
+    end
+    for i, item in ipairs(ordered) do
+        local rec = item.rec
+        local key = rec.skillLine or rec.name or rec
+        if #picked < PROGRESS_MOST and not kinds[key] then
+            kinds[key] = true
+            Take(i, item)
+        end
+    end
+    for i, item in ipairs(ordered) do
+        if #picked >= PROGRESS_MOST then break end
+        if not used[i] then Take(i, item) end
+    end
+    local keep, result = {}, {}
+    for _, item in ipairs(picked) do keep[item] = true end
+    for _, item in ipairs(ordered) do
+        if keep[item] then result[#result + 1] = item.rec end
+    end
+    return result
+end
+
+function ProfessionCaps.ProgressLines(e)
+    local parts = {}
+    for _, rec in ipairs(ProfessionCaps.ProgressSelected(e.skillProgress)) do
+        local words = ProfessionCaps.ProgressSentence(rec)
+        if words then parts[#parts + 1] = words end
+    end
+    return parts[1] and table.concat(parts, " ") or nil
+end
+
+-- The tooltip gives the observed ranks and their time, never the duration
+-- spent practising. `started` is the first gain seen, not an activity's start.
+function ProfessionCaps.ProgressTip(rec, now)
+    local words = ProfessionCaps.ProgressWords(rec)
+    if not words then return nil end
+    local foot = Text.Foot({ from = rec.started or rec.t, to = rec.t, levelFrom = rec.level }, now)
+    return Capital(words), foot and { foot } or {}
+end
+
+Text.RegisterLines("skillProgress", { at = 61, lines = ProfessionCaps.ProgressLines })
+
+local function ProgressCaption(recs)
+    local parts = {}
+    for _, rec in ipairs(ProfessionCaps.ProgressSelected(recs)) do
+        local words = ProfessionCaps.ProgressWords(rec)
+        if words then parts[#parts + 1] = words end
+    end
+    return ns.UI.Format.List(parts, { max = 3, shown = 2 })
+end
+
+-- Quiet progress is allowed to lead a plate of its own. A reached cap,
+-- find or finale still leads where one is present, and the existing caption
+-- grammar places the short rank range alongside it without a new section.
+Text.RegisterCaption("skillProgress", {
+    moment = "skillProgress",
+    take = function(m) return ProgressValid(m.progress) and m.progress or nil end,
+    lead = { at = 85, say = function(recs) return Capital(ProgressCaption(recs)) end },
+    tail = { at = 75, say = ProgressCaption },
+})

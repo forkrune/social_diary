@@ -1,86 +1,88 @@
--- Witnesses (Features/Witnesses/): who watched while the user died,
--- who tried to save them, and who saved them in a fight they only just
--- survived, all off what the nameplates say; the timeline's lines and the
--- picker's reasons.
+-- Witness detection from continuous observations, followed through its
+-- existing timeline/card/picker surfaces. Attributed assistance and guarded
+-- damage-meter scenarios have their own integration cases in witness_detection.
 
 local T = ...
 local mock, F = T.mock, T.F
 local Section, Check, Eq = T.Section, T.Check, T.Eq
 local ns = T.Boot()
-
 local W = ns.Witnesses
 local SELF, STRANGER, FRIEND, PUG, HOSTILE = F.SELF, F.STRANGER, F.FRIEND, F.PUG, F.HOSTILE
 local STRANGER2, GARRICK = F.STRANGER2, F.GARRICK
-
 local STRIDER = "Creature-0-4615-1-832-2955-00004B69A3"
 local STRIDER2 = "Creature-0-4615-1-832-2955-00004B69A4"
 local WOLF = "Creature-0-4615-1-832-2958-00004B6A01"
-local HOGGER = "Creature-0-4615-1-832-448-00004B69A9"
 
-local function Mob(guid, name, extra)
-    local def = { guid = guid, name = { name }, isPlayer = false, hostile = true }
-    for key, value in pairs(extra or {}) do def[key] = value end
-    return def
-end
-
--- In combat, unit by unit: the user follows mock.inCombat, everyone else
--- this set.
-local fighting = {}
+local fighting, dead, afk = {}, {}, {}
 _G.UnitAffectingCombat = function(unit)
     if unit == "player" then return mock.inCombat end
     local def = mock.units[unit]
-    return def ~= nil and fighting[def.guid] == true
+    if not def then return false end
+    if fighting[def.guid] ~= nil then return fighting[def.guid] end
+    return def.isPlayer == false and mock.inCombat or false
 end
+_G.UnitIsDeadOrGhost = function(unit)
+    if unit == "player" then return mock.dead or mock.ghost end
+    local def = mock.units[unit]
+    return def and dead[def.guid] or false
+end
+_G.UnitIsAFK = function(unit)
+    local def = mock.units[unit]
+    return def and afk[def.guid] or false
+end
+_G.GetTime = function() return mock.now end
 
--- `def` on a nameplate, with `target` targeted.
-local function Plate(i, def, target)
-    mock.SetUnit("nameplate" .. i, def)
+local function Mob(guid, name)
+    return { guid = guid, name = { name }, isPlayer = false, hostile = true }
+end
+local function Plate(i, who, target)
+    mock.SetUnit("nameplate" .. i, who)
     mock.SetUnit("nameplate" .. i .. "target", target)
+    mock.fire("NAME_PLATE_UNIT_ADDED", "nameplate" .. i)
 end
-
--- The user's target, on the user: a foe.
-local function Target(def)
-    mock.SetUnit("target", def)
+local function Target(guid)
+    mock.SetUnit("target", Mob(guid or STRIDER, "Plainstrider"))
     mock.SetUnit("targettarget", SELF)
     mock.fire("PLAYER_TARGET_CHANGED")
 end
-
--- The client's clock to the fraction of a second: the server's, and a
--- fraction a test can set.
-local frac = 0
-_G.GetTime = function() return mock.now + frac end
-
--- `seconds` go by, the plates read once a second as the ticker does.
 local function Pass(seconds)
     for _ = 1, seconds do
         mock.now = mock.now + 1
         ns._test.WitnessesScan()
     end
 end
-
+local function Fresh()
+    mock.dead, mock.ghost, mock.feigning, mock.inCombat = false, false, false, false
+    mock.fire("PLAYER_ENTERING_WORLD", false, false)
+    mock.fire("PLAYER_REGEN_ENABLED")
+    for _ = 1, 6 do mock.RunTimers() end
+    T.BlankDiary()
+    mock.ClearUnits()
+    mock.SetUnit("player", SELF)
+    fighting, dead, afk = {}, {}, {}
+    mock.now = mock.now + 60
+end
 local function Start()
     mock.inCombat = true
     mock.fire("PLAYER_REGEN_DISABLED")
+    Target()
 end
-
-local function Fresh()
-    T.BlankDiary()
-    fighting = {}
-    mock.ClearUnits()
-    mock.SetUnit("player", SELF)
+local function Die()
+    mock.dead = true
+    mock.fire("PLAYER_DEAD")
     mock.inCombat = false
     mock.fire("PLAYER_REGEN_ENABLED")
+    for _ = 1, 6 do mock.RunTimers() end
 end
-
 local function Line(guid, kind)
     local row = ns._test.LatestInteraction(guid, kind)
     if not row then return nil end
     local _, text = ns.UI.DescribeItem({ kind = "row", row = row }, guid)
     return (text:gsub("\194\160", " "))
 end
-
 local function Rows(guid)
     return T.Rows(guid, W.WATCHED) + T.Rows(guid, W.HELPED) + T.Rows(guid, W.SAVED)
+        + T.Rows(guid, W.AID)
 end
 
 mock.now = 1792000000
@@ -89,422 +91,155 @@ mock.fire("PLAYER_ENTERING_WORLD", true, false)
 mock.RunTimers()
 
 --------------------------------------------------------------------------
-Section("looked on: had you targeted as you died, out of combat")
+Section("a continuous witness is retained with evidence")
 
 Fresh()
 Start()
-Target(Mob(STRIDER, "Plainstrider"))
 Plate(1, STRANGER, SELF)
-mock.fire("UNIT_TARGET", "nameplate1")
--- Not witnesses: an enemy, someone in the group, a healer (in combat, you
--- targeted), someone looking elsewhere.
-Plate(2, HOSTILE, SELF)
-mock.fire("UNIT_TARGET", "nameplate2")
-ns.Roster.Update({ [PUG.guid] = {} }, true, false)
-Plate(3, PUG, SELF)
-mock.fire("UNIT_TARGET", "nameplate3")
-fighting[FRIEND.guid] = true
-Plate(4, FRIEND, SELF)
-mock.fire("UNIT_TARGET", "nameplate4")
-Plate(5, GARRICK, Mob(WOLF, "Wolf"))
-mock.fire("UNIT_TARGET", "nameplate5")
-local f = ns._test.Witnesses()
-Check(f.looked[STRANGER.guid], "the stranger looking on was not noted")
-Eq(f.looked[HOSTILE.guid], nil, "an enemy was noted")
-Eq(f.looked[PUG.guid], nil, "a group member was noted")
-Eq(f.looked[FRIEND.guid], nil, "someone in combat with you targeted was noted as looking on")
-Eq(f.looked[GARRICK.guid], nil, "someone looking elsewhere was noted")
-
-Pass(20)
+Pass(3)
+Die()
+local row = ns._test.LatestInteraction(STRANGER.guid, W.WATCHED)
+Check(row ~= nil, "a continuously observed witness was omitted")
+Eq(row.context.evidence, 1, "new observations are distinguishable from old rows")
+Eq(row.context.method, "target_streak", "the observation basis survives")
+Eq(row.context.action, "witness", "targeting is not a helpful action")
+Eq(row.context.watched, 3, "only the unbroken sampled interval is kept")
+Eq(Line(STRANGER.guid, W.WATCHED), "Bram watched you die in Mulgore", "the original sustained-witness wording")
 mock.fire("PLAYER_DEAD")
-Eq(T.Rows(STRANGER.guid, W.WATCHED), 1, "the onlooker was not written down")
-Eq(Rows(PUG.guid), 0, "a group member was written down")
-Eq(Rows(HOSTILE.guid), 0, "an enemy was written down")
-Eq(Rows(FRIEND.guid), 0, "the healer was written down")
-Eq(Rows(GARRICK.guid), 0, "someone looking elsewhere was written down")
-Eq(Line(STRANGER.guid, W.WATCHED), "Bram mercilessly watched you die to a Plainstrider in Mulgore", "the line")
-mock.inCombat = false
 mock.fire("PLAYER_REGEN_ENABLED")
-Eq(T.Rows(STRANGER.guid, W.WATCHED), 1, "written again as combat ended")
-ns.Roster.Update({}, true, false)
+Eq(T.Rows(STRANGER.guid, W.WATCHED), 1, "duplicate death/end events duplicate the witness")
 
--- A look long before the end, then elsewhere, is not looking on.
+--------------------------------------------------------------------------
+Section("fresh presence is required through the death")
+
+local missing = {
+    { name = "a first sample at death", before = function() end,
+        after = function() Plate(1, STRANGER, SELF) end },
+    { name = "a stale sample", before = function() Plate(1, STRANGER, SELF); Pass(2) end,
+        after = function() mock.now = mock.now + 10 end },
+    { name = "a changed target", before = function() Plate(1, STRANGER, SELF); Pass(3) end,
+        after = function() Plate(1, STRANGER, Mob(WOLF, "Timber Wolf")); Pass(1) end },
+    { name = "a removed unit", before = function() Plate(1, STRANGER, SELF); Pass(3) end,
+        after = function() mock.SetUnit("nameplate1", nil); mock.fire("NAME_PLATE_UNIT_REMOVED", "nameplate1") end },
+    { name = "a hidden unit", before = function() Plate(1, STRANGER, SELF); Pass(3) end,
+        after = function() mock.SetUnit("nameplate1", F.Like(STRANGER, { visible = false })) end },
+    { name = "a dead witness", before = function() Plate(1, STRANGER, SELF); Pass(3) end,
+        after = function() dead[STRANGER.guid] = true end },
+    { name = "an AFK witness", before = function() Plate(1, STRANGER, SELF); Pass(3) end,
+        after = function() afk[STRANGER.guid] = true end },
+    { name = "an unknown combat flag", before = function() Plate(1, STRANGER, SELF); Pass(3) end,
+        after = function() fighting[STRANGER.guid] = mock.secret(false) end },
+}
+for _, case in ipairs(missing) do
+    Fresh()
+    Start()
+    case.before()
+    case.after()
+    Die()
+    Eq(Rows(STRANGER.guid), 0, case.name .. " became a witness or helper")
+end
+
+--------------------------------------------------------------------------
+Section("one foe is identified by GUID, not by its name")
+
 Fresh()
 Start()
-Plate(1, STRANGER, SELF)
-mock.fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
-Plate(1, STRANGER, Mob(WOLF, "Wolf"))
-mock.now = mock.now + 30
-mock.fire("PLAYER_DEAD")
-Eq(Rows(STRANGER.guid), 0, "a look 30 s before the death counted")
-
--- The client drops the user's target as they die (probe, 14 Oct): the
--- line still names the foe, from while the fight went. With /sd debug on,
--- the trace is kept in the diary, a snapshot of everyone at the death.
-Fresh()
-ns.db.settings.debug = true
-ns.db.witnessTrace = nil
-Start()
-Target(Mob(STRIDER, "Plainstrider"))
-Plate(1, STRANGER, SELF)
-Plate(2, GARRICK, nil)
-mock.fire("UNIT_TARGET", "nameplate1")
-mock.SetUnit("target", nil)
-mock.fire("PLAYER_DEAD")
-ns.db.settings.debug = false
-Eq(Line(STRANGER.guid, W.WATCHED), "Bram saw you die to a Plainstrider in Mulgore", "the foe was lost with the target")
-local trace = table.concat(ns.db.witnessTrace or {}, "\n")
-Check(trace:find("Plainstrider ~B69A3 is on you", 1, true), "the trace does not tell the foe by its GUID")
-Check(trace:find("you died: 2 plate(s), 2 of players", 1, true), "the death's snapshot is not in the trace")
-Check(trace:find("Garrick Fallow [nameplate2]: target nobody, combat false", 1, true),
-    "the snapshot does not say what everyone was doing")
-Check(trace:find("Bram Redfen [nameplate1]: target YOU", 1, true), "the snapshot does not say who had you targeted")
-
--- Looking at the creature killing you is looking on too; at another of
--- its kind, not: a Plainstrider is one GUID, not a name.
-Fresh()
-Start()
-Target(Mob(STRIDER, "Plainstrider"))
 Plate(1, STRANGER, Mob(STRIDER, "Plainstrider"))
 Plate(2, GARRICK, Mob(STRIDER2, "Plainstrider"))
-ns._test.WitnessesScan()
-mock.now = mock.now + 5
-mock.fire("PLAYER_DEAD")
-Eq(T.Rows(STRANGER.guid, W.WATCHED), 1, "looking at your foe was not looking on")
-Eq(Rows(GARRICK.guid), 0, "looking at another Plainstrider was looking on")
+Plate(3, HOSTILE, SELF)
+Pass(3)
+Die()
+Eq(T.Rows(STRANGER.guid, W.WATCHED), 1, "the particular observed foe is relevant")
+Eq(Rows(GARRICK.guid), 0, "a different creature with the same name was conflated")
+Eq(Rows(HOSTILE.guid), 0, "an enemy was called a friendly witness")
 
--- A creature tabbed to, on someone else, is no foe: fighting it is not
--- helping, looking at it is not looking on.
 Fresh()
-Start()
-Target(Mob(STRIDER, "Plainstrider"))
-mock.SetUnit("target", Mob(STRIDER2, "Plainstrider"))
-mock.SetUnit("targettarget", GARRICK)
-mock.fire("PLAYER_TARGET_CHANGED")
-fighting[GARRICK.guid] = true
-Plate(1, GARRICK, Mob(STRIDER2, "Plainstrider"))
-Plate(2, STRANGER, Mob(STRIDER2, "Plainstrider"))
-ns._test.WitnessesScan()
-f = ns._test.Witnesses()
-Eq(f.foes[STRIDER2], nil, "a creature on someone else was a foe for being your target")
-mock.SetUnit("target", nil)
-mock.fire("PLAYER_DEAD")
-Eq(Rows(GARRICK.guid), 0, "fighting a creature you tabbed to was helping")
-Eq(Rows(STRANGER.guid), 0, "looking at a creature you tabbed to was looking on")
-
--- Away from the keyboard is not looking on.
-Fresh()
-mock.afk = true
 Start()
 Plate(1, STRANGER, SELF)
-mock.fire("PLAYER_DEAD")
-mock.afk = false
-Eq(Rows(STRANGER.guid), 0, "someone AFK looked on")
+Pass(6)
+Plate(1, STRANGER, Mob(WOLF, "Timber Wolf"))
+Pass(1)
+Plate(1, STRANGER, SELF)
+Pass(2)
+Die()
+row = ns._test.LatestInteraction(STRANGER.guid, W.WATCHED)
+Eq(row and row.context.watched, 2, "a resumed look incorrectly adds the earlier streak")
 
--- Out of a fight (a fall): who looked on, read as the user falls, and no
--- creature to name.
+--------------------------------------------------------------------------
+Section("mere target and combat snapshots never imply help")
+
+for _, died in ipairs({ false, true }) do
+    Fresh()
+    Start()
+    local from = mock.now
+    Plate(1, STRANGER, Mob(STRIDER, "Plainstrider"))
+    Pass(1)
+    fighting[STRANGER.guid] = true
+    Plate(1, STRANGER, Mob(WOLF, "Timber Wolf"))
+    Pass(3)
+    if died then Die() else
+        mock.inCombat = false
+        mock.fire("PLAYER_REGEN_ENABLED")
+        ns.Fire("SD_FIGHT_SURVIVED", from, mock.now, 99, 100, { npcID = 2955, name = "Plainstrider" })
+        for _ = 1, 6 do mock.RunTimers() end
+    end
+    Eq(Rows(STRANGER.guid), 0, "unrelated observations became assistance")
+end
+
+Fresh()
+Start()
+Plate(1, STRANGER, SELF)
+Pass(3)
+mock.fire("UNIT_DIED", STRIDER)
+for _ = 1, 6 do mock.RunTimers() end
+mock.inCombat = false
+mock.fire("PLAYER_REGEN_ENABLED")
+ns.Fire("SD_FIGHT_SURVIVED", mock.now - 3, mock.now, 150, 100)
+for _ = 1, 6 do mock.RunTimers() end
+Eq(Rows(STRANGER.guid), 0, "a missing group-kill event invented a rescue")
+
+--------------------------------------------------------------------------
+Section("environmental deaths need an earlier observation too")
+
+Fresh()
+Plate(1, STRANGER, SELF)
+Pass(2)
+Die()
+row = ns._test.LatestInteraction(STRANGER.guid, W.WATCHED)
+Check(row ~= nil, "a pre-observed witness to an out-of-combat death was lost")
+Eq(row.context.name, nil, "an environmental death names no guessed creature")
+
 Fresh()
 mock.SetUnit("target", STRANGER)
 mock.SetUnit("targettarget", SELF)
-Plate(1, STRANGER, SELF)
-mock.fire("PLAYER_DEAD")
-Eq(T.Rows(STRANGER.guid, W.WATCHED), 1, "one row for the target and the plate")
-Eq(Line(STRANGER.guid, W.WATCHED), "Bram saw you die in Mulgore", "the line without a creature")
+Die()
+Eq(Rows(STRANGER.guid), 0, "the death handler invented a pre-death observation")
 
---------------------------------------------------------------------------
-Section("how long they watched: saw, watched, mercilessly watched")
-
--- Each looks on from `from` seconds before the death, through to it.
-local function Watched(seconds, fraction)
-    Fresh()
-    Start()
-    Target(Mob(STRIDER, "Plainstrider"))
-    frac = fraction or 0
-    Plate(1, STRANGER, SELF)
-    mock.fire("UNIT_TARGET", "nameplate1")
-    frac = 0
-    Pass(seconds)
-    mock.fire("PLAYER_DEAD")
-    return ns._test.LatestInteraction(STRANGER.guid, W.WATCHED), Line(STRANGER.guid, W.WATCHED)
-end
-
-mock.subZone = "Red Cloud Mesa"
-local row, line = Watched(1)
-Eq(row and row.context.watched, 1, "a second's look")
-Eq(line, "Bram saw you die to a Plainstrider in Red Cloud Mesa", "under 1.5 s, and in the subzone")
-row, line = Watched(2, 0.6)
-Eq(row and row.context.watched, 1.4, "the fraction of a second counts")
-Eq(line, "Bram saw you die to a Plainstrider in Red Cloud Mesa", "1.4 s")
-row, line = Watched(2)
-Eq(line, "Bram watched you die to a Plainstrider in Red Cloud Mesa", "from 1.5 s")
-row, line = Watched(4)
-Eq(line, "Bram watched you die to a Plainstrider in Red Cloud Mesa", "4 s")
-row, line = Watched(5)
-Eq(line, "Bram mercilessly watched you die to a Plainstrider in Red Cloud Mesa", "from 5 s")
-mock.subZone = ""
-
--- A look broken counts for as long as it ran; a new one starts again.
 Fresh()
 Start()
-Target(Mob(STRIDER, "Plainstrider"))
 Plate(1, STRANGER, SELF)
-mock.fire("UNIT_TARGET", "nameplate1")
-Pass(6)
-Plate(1, STRANGER, Mob(WOLF, "Wolf"))
 Pass(2)
+mock.feigning = true
 mock.fire("PLAYER_DEAD")
-Eq(ns._test.LatestInteraction(STRANGER.guid, W.WATCHED).context.watched, 6, "a broken look lost its length")
-Fresh()
-Start()
-Target(Mob(STRIDER, "Plainstrider"))
-Plate(1, STRANGER, SELF)
-mock.fire("UNIT_TARGET", "nameplate1")
-Pass(6)
-Plate(1, STRANGER, Mob(WOLF, "Wolf"))
-Pass(1)
-Plate(1, STRANGER, SELF)
-mock.fire("UNIT_TARGET", "nameplate1")
-Pass(2)
-mock.fire("PLAYER_DEAD")
-Eq(ns._test.LatestInteraction(STRANGER.guid, W.WATCHED).context.watched, 2, "a look begun again added the old one")
-
--- Looking at your foe is watching too.
-Fresh()
-Start()
-Target(Mob(STRIDER, "Plainstrider"))
-Plate(1, STRANGER, Mob(STRIDER, "Plainstrider"))
-Pass(7)
-mock.fire("PLAYER_DEAD")
-Eq(Line(STRANGER.guid, W.WATCHED), "Bram mercilessly watched you die to a Plainstrider in Mulgore", "watching your foe")
-
--- A row kept before the watching was timed.
-ns.Interactions.Add(STRANGER.guid, W.WATCHED, { context = { name = "Plainstrider", npcID = 2955 } })
-Eq(Line(STRANGER.guid, W.WATCHED), "Bram watched you die to a Plainstrider in Mulgore", "an old row")
+Eq(Rows(STRANGER.guid), 0, "Feign Death became a witness story")
+mock.feigning = false
 
 --------------------------------------------------------------------------
-Section("tried to save you: in combat with one of your foes")
+Section("capture still runs after the reunion toast")
 
-Fresh()
-Start()
--- Your target is a foe; so is a creature that has you targeted.
-Target(Mob(HOGGER, "Hogger", { classification = "rare" }))
-Plate(1, Mob(STRIDER, "Plainstrider"), SELF)
-mock.fire("UNIT_TARGET", "nameplate1")
--- Looked on first, then waded in: in combat with Hogger.
-Plate(2, FRIEND, SELF)
-mock.fire("UNIT_TARGET", "nameplate2")
-fighting[FRIEND.guid] = true
-Plate(2, FRIEND, Mob(HOGGER, "Hogger"))
-ns._test.WitnessesScan()
--- In combat with the Plainstrider on you.
-fighting[STRANGER2.guid] = true
-Plate(3, STRANGER2, Mob(STRIDER, "Plainstrider"))
-mock.fire("UNIT_TARGET", "nameplate3")
--- Not helpers: in combat with a creature that is no foe of yours, and out
--- of combat with your foe targeted (who looked on).
-fighting[GARRICK.guid] = true
-Plate(4, GARRICK, Mob(WOLF, "Wolf"))
-Plate(5, STRANGER, Mob(HOGGER, "Hogger"))
-ns._test.WitnessesScan()
-f = ns._test.Witnesses()
-Check(f.foes[HOGGER], "your target was not a foe")
-Check(f.foes[STRIDER], "a creature on you was not a foe")
-Eq(f.foes[WOLF], nil, "a creature on someone else was a foe")
-
-mock.now = mock.now + 25
-local died = mock.now
-mock.fire("PLAYER_DEAD")
-Eq(T.Rows(FRIEND.guid, W.HELPED), 1, "the one who waded in was not written down")
-Eq(T.Rows(FRIEND.guid, W.WATCHED), 0, "a helper also looked on")
-Eq(T.Rows(STRANGER2.guid, W.HELPED), 1, "the one fighting the creature on you was not written down")
-Eq(Rows(GARRICK.guid), 0, "someone fighting their own was written down")
-Eq(T.Rows(STRANGER.guid, W.HELPED), 0, "someone out of combat with your foe targeted helped")
-Eq(T.Rows(STRANGER.guid, W.WATCHED), 1, "someone out of combat with your foe targeted did not look on")
-Eq(Line(FRIEND.guid, W.HELPED), "Numa tried to save you from Hogger in Mulgore", "the line")
-Eq(ns._test.LatestInteraction(FRIEND.guid, W.HELPED).time, died, "the row's time is the death's")
-
--- A creature that targets you only after the helper took it on is still
--- one of your foes by the end.
-Fresh()
-Start()
-fighting[FRIEND.guid] = true
-Plate(1, FRIEND, Mob(STRIDER2, "Plainstrider"))
-mock.fire("UNIT_TARGET", "nameplate1")
-Plate(2, Mob(STRIDER2, "Plainstrider"), SELF)
-mock.fire("UNIT_TARGET", "nameplate2")
-mock.fire("PLAYER_DEAD")
-Eq(T.Rows(FRIEND.guid, W.HELPED), 1, "the order of the looks mattered")
-
--- The plates are read once a second: a late helper targets your foe out
--- of combat, hits it, and it dies before the next reading, which finds
--- them in combat with their target gone. Each at some point is enough.
--- With /sd debug on, which names it all.
-Fresh()
-ns.db.settings.debug = true
-Start()
-Target(Mob(STRIDER, "Plainstrider"))
-Plate(1, FRIEND, Mob(STRIDER, "Plainstrider"))
-mock.fire("UNIT_TARGET", "nameplate1")
-fighting[FRIEND.guid] = true
-Plate(1, FRIEND, nil)
-ns._test.WitnessesScan()
-mock.fire("PLAYER_DEAD")
-ns.db.settings.debug = false
-Eq(T.Rows(FRIEND.guid, W.HELPED), 1, "a target and a fight a second apart did not add up")
-
---------------------------------------------------------------------------
-Section("saved you: fought one of your foes in a fight you survived at 20% or less")
-
--- A fight with a helper, and the close-call judge's answer for it.
-local function Rescue(taken, foe)
-    Fresh()
-    local from = mock.now
-    Start()
-    Target(Mob(STRIDER, "Plainstrider"))
-    fighting[STRANGER.guid] = true
-    Plate(1, STRANGER, Mob(STRIDER, "Plainstrider"))
-    mock.fire("UNIT_TARGET", "nameplate1")
-    mock.now = mock.now + 40
-    mock.inCombat = false
-    mock.fire("PLAYER_REGEN_ENABLED")
-    W.Survived(from, mock.now, taken, 100, foe)
-end
-
-Rescue(70, { npcID = 2955, name = "Plainstrider" })
-Eq(Rows(STRANGER.guid), 0, "30% left was a rescue")
-
-ns.db.settings.debug = true
-Rescue(85, { npcID = 2955, name = "Plainstrider" })
-ns.db.settings.debug = false
-Eq(T.Rows(STRANGER.guid, W.SAVED), 1, "the rescuer was not written down")
-Eq(Line(STRANGER.guid, W.SAVED), "Bram saved you from a Plainstrider at 15% health in Mulgore", "the line")
-
--- Healed through by someone the meter does not list: more than all of it.
-Rescue(130)
-Eq(Line(STRANGER.guid, W.SAVED), "Bram saved you at 1% health in Mulgore", "healed through")
-
--- A judge for a fight that is not kept: nothing.
-Fresh()
-W.Survived(mock.now - 3600, mock.now - 3500, 90, 100)
-Eq(Rows(STRANGER.guid), 0, "an unknown fight was judged")
-
--- Through the close-call judge (Features/CloseCalls/Capture.lua): the meter's damage
--- taken once combat is over, told as SD_FIGHT_SURVIVED (Core/Events.lua),
--- which Capture.lua hands to Survived. The earlier deaths' judges, still trying a
--- meter that was never there, are let run out first.
-Fresh()
-for _ = 1, 6 do mock.RunTimers() end
-local taken = 0
-_G.Enum.DamageMeterType = { HealingDone = 2, DamageTaken = 7 }
-_G.C_DamageMeter = {
-    GetAvailableCombatSessions = function() return { { sessionID = 1 } } end,
-    GetCombatSessionFromID = function(_, kind)
-        if kind == 7 then return { combatSources = { { isLocalPlayer = true, totalAmount = taken } } } end
-        return { combatSources = {} }
-    end,
-    GetCombatSessionSourceFromID = function() return { combatSpells = {} } end,
-}
-mock.healthMax = 100
-Start()
-Target(Mob(STRIDER, "Plainstrider"))
-fighting[STRANGER2.guid] = true
-Plate(1, STRANGER2, Mob(STRIDER, "Plainstrider"))
-mock.fire("UNIT_TARGET", "nameplate1")
-mock.now = mock.now + 30
-taken = 82
-mock.inCombat = false
-mock.fire("PLAYER_REGEN_ENABLED")
-mock.RunTimers()
-Eq(T.Rows(STRANGER2.guid, W.SAVED), 1, "the close-call judge did not ask who saved you")
-Eq(Line(STRANGER2.guid, W.SAVED), "Tullus saved you from a Plainstrider at 18% health in Mulgore", "the line")
-
---------------------------------------------------------------------------
-Section("finished off: your foe died, not by you or your group")
-
--- As in the client (14 Oct): the finisher had you targeted, cast through
--- you, and was never seen in combat. Your foe died with no PARTY_KILL.
-Fresh()
-local from = mock.now
-Start()
-Target(Mob(WOLF, "Timber Wolf"))
-Plate(1, STRANGER, SELF)
-mock.fire("UNIT_TARGET", "nameplate1")
--- Looking at another creature that dies is nothing to do with you.
-Plate(2, GARRICK, Mob(STRIDER2, "Plainstrider"))
-mock.fire("UNIT_TARGET", "nameplate2")
-mock.now = mock.now + 30
-ns._test.WitnessesScan()
-mock.fire("UNIT_DIED", WOLF)
-mock.fire("UNIT_DIED", STRIDER2)
-mock.RunTimers()
-mock.inCombat = false
-mock.fire("PLAYER_REGEN_ENABLED")
-W.Survived(from, mock.now, 96, 100, { npcID = 2958, name = "Timber Wolf" })
-Eq(T.Rows(STRANGER.guid, W.SAVED), 1, "the one who finished your foe off was not written down")
-Eq(Line(STRANGER.guid, W.SAVED), "Bram saved you from a Timber Wolf at 4% health in Mulgore", "the line")
-Eq(Rows(GARRICK.guid), 0, "someone looking at another creature was written down")
-
--- Your own kill (or your pet's, or your group's) is no rescue, whoever
--- was looking.
-Fresh()
-from = mock.now
-Start()
-Target(Mob(WOLF, "Timber Wolf"))
-Plate(1, STRANGER, SELF)
-mock.fire("UNIT_TARGET", "nameplate1")
-mock.now = mock.now + 30
-ns._test.WitnessesScan()
-mock.fire("PARTY_KILL", "Pet-0-4615-1-832-165189-0000AAAAAA", WOLF)
-mock.fire("UNIT_DIED", WOLF)
-mock.RunTimers()
-mock.inCombat = false
-mock.fire("PLAYER_REGEN_ENABLED")
-W.Survived(from, mock.now, 96, 100)
-Eq(Rows(STRANGER.guid), 0, "your pet's kill made a rescuer")
-
--- A look long before the foe died does not count.
-Fresh()
-from = mock.now
-Start()
-Target(Mob(WOLF, "Timber Wolf"))
-Plate(1, STRANGER, SELF)
-mock.fire("UNIT_TARGET", "nameplate1")
-Plate(1, STRANGER, nil)
-mock.now = mock.now + 30
-mock.fire("UNIT_DIED", WOLF)
-mock.RunTimers()
-mock.inCombat = false
-mock.fire("PLAYER_REGEN_ENABLED")
-W.Survived(from, mock.now, 96, 100)
-Eq(Rows(STRANGER.guid), 0, "a look 30 s before the foe died made a rescuer")
-
---------------------------------------------------------------------------
-Section("after the reunion toast: what a look in a fight reads")
-
--- Nearby's reunion toast (Capture/Nearby.lua) and this capture read the
--- same nameplate and the same target. A look read in a fight puts what the
--- unit shows on the character's record (Characters.ObserveUnit), so it
--- comes after the toast has taken its snapshot, as it always has:
--- Features/Witnesses/Capture.lua is listed after Capture/ in the TOC. A diary entry the diary knows by their
--- first name only (off a chat name, say) comes into view in a fight,
--- looking on: the toast names them as the diary knew them, and the look
--- reads their surname after.
 Fresh()
 ns.Characters.Forget(STRANGER.guid)
 wipe(ns.db.meta.greeted)
 ns.Characters.Observe(STRANGER.guid, { first = "Bram" })
 ns.Diary.Add(STRANGER.guid, { source = "test" })
-Eq(ns.Characters.FullName(STRANGER.guid), "Bram", "setup: the diary knew their surname")
-Eq(ns.UI.ReunionShowing(), nil, "setup: a toast is up")
+Eq(ns.Characters.FullName(STRANGER.guid), "Bram", "setup: surname already known")
 Start()
-Target(Mob(STRIDER, "Plainstrider"))
 Plate(1, STRANGER, SELF)
-mock.fire("NAME_PLATE_UNIT_ADDED", "nameplate1")
-Eq(ns.Characters.FullName(STRANGER.guid), "Bram Redfen", "the look did not read them")
+Eq(ns.Characters.FullName(STRANGER.guid), "Bram Redfen", "capture did not read the player's identity")
 mock.inCombat = false
 mock.fire("PLAYER_REGEN_ENABLED")
 local toast = ns.UI.ReunionShowing()
-Eq(toast and toast.name, "Bram", "the toast's name: the look was read before the toast took it")
+Eq(toast and toast.name, "Bram", "capture ran before the toast took its original snapshot")
 mock.RunTimers()
 
 --------------------------------------------------------------------------
@@ -560,9 +295,9 @@ ns.Interactions.Add(FRIEND.guid, W.HELPED, {})
 ns.Interactions.Add(STRANGER2.guid, W.SAVED, {})
 local reasons = {}
 for _, c in ipairs(ns.Candidates()) do reasons[c.guid] = c.why end
-Eq(reasons[STRANGER.guid], "they watched you die", "watched")
-Eq(reasons[FRIEND.guid], "they tried to save you", "tried to save")
-Eq(reasons[STRANGER2.guid], "they saved you", "saved")
+Eq(reasons[STRANGER.guid], "they were seen around the time you died", "watched")
+Eq(reasons[FRIEND.guid], "they were seen around the time you died", "tried to save")
+Eq(reasons[STRANGER2.guid], "they were seen during a fight you survived", "saved")
 
 -- What each witness did, as Core/Rows.lua's `witness` says it: the core's
 -- index of witnesses goes by it (Journey.WitnessIndex), the plate's choice

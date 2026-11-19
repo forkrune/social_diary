@@ -178,6 +178,8 @@ ns.Locale.Add("zhCN", {
     ["yours at last"] = "终于归你",
     ["someone's"] = "某人的",
     ["we fell twice"] = "我们阵亡了2次",
+    ["you fell twice"] = "你阵亡了2次",
+    ["you fell once|you fell %s times##plural"] = "你阵亡了%s次",
     ["we fell once|we fell %s times##plural"] = "我们阵亡了%s次",
     ["%s twice"] = "%s2次",
     ["%s thrice"] = "%s三次",

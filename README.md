@@ -16,13 +16,33 @@ profession caps. All of it is written into a paper journal automatically.
 <!-- screenshot: journal spread -->
 
 Made for **WoW Forever** (currently in beta): classic-era content on the
-retail addon API. Current version: 1.5.0.
+retail addon API. The installed version appears in the diary's _Settings_.
+
+This fork uses `main` for integration and practical testing. Alpha and beta
+releases are testing builds; passing offline tests does not establish that
+every scenario works in the live client.
 
 ## Install
 
-Install the Addon like you do with any oter WoW Addon: Put it in your game's `Interface/AddOns` folder.
+1. Download the addon ZIP from this fork's
+   [Releases](https://github.com/forkrune/social_diary/releases). For the
+   newest `main` build, open a successful **Tests** run under
+   [Actions](https://github.com/forkrune/social_diary/actions), download its
+   artifact, and extract the addon ZIP inside it. GitHub requires sign-in
+   to download Actions artifacts.
+2. Close the game. Back up your existing Social Diary saved variables before
+   trying an alpha or beta on a diary you want to keep.
+3. Extract the `social_diary` folder into the game's `Interface/AddOns`
+   folder. The resulting path is
+   `Interface/AddOns/social_diary/social_diary.toc`.
+4. Fully restart the client after installing or updating. New files in the
+   addon manifest require a restart.
 
-Download a release rather than the repository itself.
+Use the packaged addon ZIP. GitHub's automatic source-code archives include
+development files and are not the installable release package.
+
+See [Testing a build](CONTRIBUTING.md#testing-a-build) for the first in-game
+checks and the details to include in feedback.
 
 ## Getting started
 
@@ -55,10 +75,11 @@ All data stays on your computer.
 
 ## Contributing
 
-Bug reports and ideas are welcome in
-[Issues](https://github.com/social-diary/social_diary/issues). Questions go to
-[Discussions](https://github.com/social-diary/social_diary/discussions). If you
-would like to change the code, start with [CONTRIBUTING.md](CONTRIBUTING.md).
+Report problems with this fork in its
+[Issues](https://github.com/forkrune/social_diary/issues), including the build
+version and what you observed. The
+[upstream project](https://github.com/social-diary/social_diary) maintains the
+original addon. To change this fork, start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Credits
 

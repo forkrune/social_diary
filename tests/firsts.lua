@@ -264,11 +264,13 @@ Check(alt.firsts.rare, "a blue after that was not found")
 ns.ownGUID = SELF.guid
 
 --------------------------------------------------------------------------
-Section("firsts on the plates: gifts outrank deaths (JRN-24)")
+Section("firsts on the plates: gifts keep their rank while distinct experiences get room")
 
 -- A level with four places: a death, a note (where the level was reached),
 -- a first green and a gift, each far from the others. Three plates: the
--- death's goes, and the level-up opens none but joins the note's.
+-- player's note, the gift and the different experience at the death's
+-- place. The other first remains recorded; the level-up opens none but
+-- joins the note's. Fixed kind ranks still break comparable choices.
 local d0 = mock.now + DAY
 local r = {
     startedAt = d0, startLevel = 5, levels = {}, marks = {}, deaths = {},
@@ -302,7 +304,8 @@ for _, p in ipairs(plates) do
     for _, m in ipairs(p.moments) do kinds[#kinds + 1] = m.what or m.kind end
 end
 table.sort(kinds)
-Eq(table.concat(kinds, ","), "bag,level,note,uncommon", "the plates' moments")
+Eq(table.concat(kinds, ","), "arrive,bag,death,level,note,stay", "the plates' distinct experiences")
+Eq(#e.finds, 2, "highlight selection deleted the first that was not chosen")
 -- A week past the cap with only a first in it still has an entry.
 Eq(#R.Gather(r, d0 + 50, d0 + 150, {}).finds, 1, "a first not in its stretch")
 

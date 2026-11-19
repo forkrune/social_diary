@@ -62,6 +62,7 @@ grammar.ItemWord = function(_, name) return name end
 grammar.KillerName = function(killer) return killer.name end
 
 grammar.YOU_FOR = {
+    ["przeżyłeś"] = "%s przeżył", ["przeżyłaś"] = "%s przeżyła",
     ["ty"] = "%s", ["cię"] = "%s", ["ci"] = "%s",
     ["ciebie"] = "%s", ["tobie"] = "%s", ["tobą"] = "%s",
     ["twój"] = "%s", ["twoja"] = "%s", ["twoje"] = "%s",

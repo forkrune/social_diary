@@ -43,21 +43,20 @@
 --               them counts it (Interactions.Fights); a kill's context.by
 --               is the group member who landed the blow, none when it was
 --               the user's own
---   witness     "watched" (they looked on as the user died) or "helped"
---               (they fought the user's foes, in a fight the user died in
---               or survived): a stranger who was there at one of the
---               user's deaths or close calls, written at that moment's own
---               time, so the plates find a moment's witnesses by it
---               (Core/Journey.lua's WitnessIndex: every such row, by time);
---               context.watched is a watcher's seconds, context.pct a
---               rescue's health left, and { npcID, name, rank } the
---               creature, where known
+--   witness     "watched" or "helped": the historical grouping for a
+--               person connected to the user's encounter. The plates find
+--               such rows at a moment's time (Core/Journey.lua's
+--               WitnessIndex); the declaring kind owns its evidence and
+--               wording. This flag alone proves neither an action nor a
+--               rescue, and legacy context is not measured health
 --   plate       its rank for the plate on the person's page, lower first
 --               (Core/PersonPlate.lua: Your Diary's ranks where the kinds
 --               meet); without one, PersonPlate.LAST; false, never weighed
 --   hidden      never shown on the timeline
---   reason      why the picker offers someone whose latest row it is ("they
---               saved you"); without one, "recent <type>"
+--   reason      string, or function(row): why the picker offers someone
+--               whose latest row it is. A function can distinguish what
+--               that particular row establishes from an older saved shape;
+--               without a reason, the picker uses "recent <type>"
 --   text        function(row, guid, unplaced): its line on the timeline
 --               (`unplaced`: without its place, for a tooltip that shows
 --               the place apart); without one,
@@ -97,6 +96,16 @@ end
 -- The kind's table, or an empty one for a kind nobody declared.
 function Rows.Get(kind)
     return KINDS[kind] or NONE
+end
+
+-- A reason belongs to the particular encounter, when its kind supplies a
+-- function, rather than to every row ever saved under that kind. Keeping
+-- this here gives the picker the same contract for old static reasons and
+-- evidence-dependent ones without teaching it about any feature.
+function Rows.Reason(row)
+    local reason = Rows.Get(row and row.type).reason
+    if type(reason) == "function" then reason = reason(row) end
+    return type(reason) == "string" and reason ~= "" and reason or nil
 end
 
 -- Every declared kind's name, sorted (for the tests).

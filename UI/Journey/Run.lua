@@ -114,6 +114,21 @@ local function NameOf(visit, guid)
 end
 YourDiary.RunNameOf = NameOf
 
+-- Only an owner-only roster establishes the solo wording. An old visit
+-- with no roster stays with its existing wording rather than treating a
+-- missing member list as evidence that nobody else was present.
+local function SoloVisit(visit)
+    local me, owner = visit.me or ns.ownGUID, false
+    for _, member in ipairs(visit.members or {}) do
+        if member.guid ~= me then return false end
+        owner = true
+    end
+    for _, death in ipairs(visit.deathLog or {}) do
+        if death.guid ~= me then return false end
+    end
+    return owner
+end
+
 -- An item's ID and name from its link.
 local function ItemID(link)
     return type(link) == "string" and tonumber(link:match("item:(%d+)")) or nil
@@ -554,7 +569,7 @@ local function FallenNote(run, visit)
         end
     end
     local fs = Font(Line(), Style.NEUTON_ITALIC, L.words.fell, G)
-    fs:SetText(Text.RunFell(deaths))
+    fs:SetText(Text.RunFell(deaths, SoloVisit(visit)))
     PlaceText(plane, turn, fs, x + 2, 8)
     -- (its heading: the words the pad boxes)
     run.fallenHead = fs
@@ -925,7 +940,7 @@ function YourDiary.DrawRun(e, visit)
     if deaths > 0 then
         Hit(run, box, function(self)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText(Text.RunFell(deaths))
+            GameTooltip:SetText(Text.RunFell(deaths, SoloVisit(visit)))
             local all = {}
             for _, f in ipairs(fallen) do
                 for _, d in ipairs(f.deaths) do all[#all + 1] = { f = f, d = d } end

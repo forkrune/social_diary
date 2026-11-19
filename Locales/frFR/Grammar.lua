@@ -94,6 +94,15 @@ G.Genitive = De
 -- picked first (by the sex of the character the row is about), then
 -- looked up here, so each form has its line.
 G.YOU_FOR = {
+    ["t’avaient attaqué"] = "avaient attaqué %s",
+    ["t’avaient attaquée"] = "avaient attaqué %s",
+    ["t’a soigné"] = "a soigné %s",
+    ["t’a soignée"] = "a soigné %s",
+    ["t’a protégé"] = "a protégé %s",
+    ["t’a protégée"] = "a protégé %s",
+    ["t’avait attaqué"] = "avait attaqué %s",
+    ["t’avait attaquée"] = "avait attaqué %s",
+    ["tu as survécu"] = "%s a survécu",
     -- The reader as the subject: "%s a tué".
     ["tu es mort"] = "%s est mort", ["tu es morte"] = "%s est morte",
     ["tu y es mort"] = "%s y est mort", ["tu y es morte"] = "%s y est morte",

@@ -2,7 +2,7 @@
 ## Title: Social Diary
 ## Notes: Remembers the people you meet in the open world.
 ## Author: social-diary
-## Version: 4.1.1
+## Version: 4.2.0-alpha.1
 ## SavedVariables: SocialDiaryDB
 ## SavedVariablesPerCharacter: SocialDiaryCharDB
 ## LoadSavedVariablesFirst: 1
@@ -459,6 +459,9 @@ Features/Hunts/Capture.lua
 # same units as Capture/Nearby.lua's reunion toast and must still run after
 # it, as on every event it shares with Capture/
 # (Features/Witnesses/Capture.lua's header).
+# The meter reader loads before its capture client; both stay after the
+# earlier capture handlers so observed names cannot alter a reunion toast.
+Features/Witnesses/Meter.lua
 Features/Witnesses/Capture.lua
 
 #@do-not-package@
